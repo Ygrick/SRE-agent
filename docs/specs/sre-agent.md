@@ -38,6 +38,11 @@ mode = "never"  # full auto для автоматизации
 
 Ты — L1 SRE-агент. Твоя задача — диагностировать инфраструктурный инцидент.
 
+## Доступ к серверу
+- Для выполнения команд на сервере используй: `ssh playground <command>`
+- Пример: `ssh playground top -bn1`, `ssh playground df -h`
+- Для Docker-команд: `ssh playground docker stats --no-stream`, `ssh playground docker logs --tail 50 <container>`
+
 ## Правила
 - Выполняй ТОЛЬКО read-only команды
 - Разрешённые команды: top, htop, ps, df, du, free, cat, tail, head, grep, docker stats, docker logs, journalctl, netstat, ss, lsof, uptime, vmstat, iostat
@@ -160,15 +165,43 @@ HTTP 202 Accepted (асинхронная обработка).
 3. При повторном старте — `PUT /agents/{id}` (update)
 4. Health endpoint: `GET /health` — для периодического probe от Registry
 
+## Доступ к полигону (SSH)
+
+Codex выполняет диагностические команды на полигоне **через SSH**, а не через Docker socket.
+
+**Почему SSH:**
+- Изоляция: sre-agent не получает доступ к Docker daemon
+- Реалистичность: в production SRE-агент подключается к серверам именно по SSH
+- Безопасность: SSH-ключ ограничен конкретным хостом, нет рисков escape из контейнера
+
+**Настройка:**
+- В контейнере `playground-app` запущен SSH-сервер (OpenSSH)
+- Пользователь `sre-agent` с ограниченными правами (read-only shell)
+- SSH-ключ генерируется при деплое, приватный ключ монтируется в `sre-agent` контейнер
+- Конфигурация в `~/.ssh/config` внутри sre-agent:
+  ```
+  Host playground
+      HostName playground-app
+      User sre-agent
+      IdentityFile /run/secrets/playground_ssh_key
+      StrictHostKeyChecking no
+  ```
+
+**Команды Codex через SSH:**
+- Вместо `docker stats` → `ssh playground docker stats` (если Docker доступен на хосте)
+- Или прямые команды: `ssh playground top -bn1`, `ssh playground df -h`
+- AGENTS.md инструктирует Codex использовать `ssh playground <command>`
+
 ## Sandbox и безопасность
 
 | Мера | Реализация |
 |---|---|
-| Read-only shell | Codex sandbox + AGENTS.md whitelist + Python wrapper |
-| Network isolation | Codex sandbox: network disabled (кроме Gateway) |
+| Read-only shell | AGENTS.md whitelist + SSH-пользователь без write-прав |
+| Network isolation | SSH только к playground, LLM только через Gateway |
 | Context budget | Codex built-in + truncation в AGENTS.md инструкциях |
 | Max iterations | Codex timeout + max 15 команд в AGENTS.md |
 | Dangerous commands | Whitelist бинарников, regex filter на операторы записи |
+| SSH access control | Отдельный пользователь sre-agent, restricted shell |
 
 ## Ограничения
 
@@ -180,6 +213,39 @@ HTTP 202 Accepted (асинхронная обработка).
 | Max stdout per command | 4000 chars (truncated) |
 | Concurrent investigations | 5 |
 
+## Трейсинг в Langfuse
+
+Два уровня трейсинга:
+
+**Уровень A — Gateway-level (автоматический):**
+- Gateway записывает trace каждого LLM-запроса: model, provider, tokens, latency, cost
+- Работает для всех агентов без дополнительной интеграции
+- Span: `llm_request` с атрибутами provider, model, status, TTFT, TPOT
+
+**Уровень B — Agent-level (парсинг `codex exec --json`):**
+- `codex exec --json` выводит structured event stream в stdout
+- Webhook handler читает этот поток и создаёт spans в Langfuse:
+  - Parent trace: `investigation` (alert_id, host, severity)
+  - Child spans: `llm_call`, `tool_call` (qdrant_search, telegram_send), `shell_command`
+- Каждый shell_command span содержит: command, exit_code, stdout (truncated), duration
+- Каждый tool_call span: tool name, input, output, duration
+
+**Реализация:**
+```python
+# Webhook handler запускает Codex и парсит JSON events
+process = await asyncio.create_subprocess_exec(
+    "codex", "exec", "--json", "--quiet", prompt,
+    stdout=asyncio.subprocess.PIPE
+)
+async for line in process.stdout:
+    event = json.loads(line)
+    match event["type"]:
+        case "tool_call":
+            langfuse.span(name=event["tool"], ...)
+        case "completion":
+            langfuse.span(name="llm_call", ...)
+```
+
 ## Зависимости
 
 - **Codex CLI** — ядро агента
@@ -187,4 +253,5 @@ HTTP 202 Accepted (асинхронная обработка).
 - **Qdrant** — Runbook search (MCP tool)
 - **Telegram Bot API** — отчёты (MCP tool)
 - **A2A Registry** — регистрация
-- **Langfuse** — трейсинг
+- **Langfuse** — трейсинг (уровни A и B)
+- **asyncssh / paramiko** — SSH-подключение к полигону

@@ -136,9 +136,35 @@ ema = alpha * current_latency + (1 - alpha) * prev_ema
 | 503 | Все провайдеры down | `{"error": {"message": "...", "type": "service_unavailable"}}` |
 | 502 | Провайдер вернул ошибку (после всех retry) | `{"error": {"message": "...", "type": "upstream_error"}}` |
 
+## Logging
+
+**Библиотека:** `structlog` — structured JSON logging с автоматическим добавлением `trace_id` / `span_id` из OpenTelemetry контекста.
+
+```python
+import structlog
+
+logger = structlog.get_logger()
+
+# Каждый лог — JSON с trace context
+logger.info("llm_request_completed",
+    provider="vllm-local",
+    model="qwen-2.5-coder-7b",
+    latency_ms=1234,
+    tokens_in=500,
+    tokens_out=200,
+    status=200,
+)
+```
+
+## Метрики: экспорт в Prometheus
+
+**Метод:** `opentelemetry-exporter-prometheus` — единый OTel SDK для traces и metrics. Prometheus scrape endpoint `/metrics` создаётся автоматически. Не нужно дублировать инструментирование в `prometheus-client`.
+
 ## Зависимости
 
-- **PostgreSQL** — провайдеры, API keys
-- **Prometheus** — scrape /metrics
-- **Langfuse** — traces
+- **PostgreSQL** — провайдеры, API keys (через SQLAlchemy Async)
+- **Prometheus** — scrape /metrics (через opentelemetry-exporter-prometheus)
+- **Langfuse** — traces (Gateway-level: каждый LLM-запрос)
 - **LLM Providers** — upstream (vLLM, OpenRouter)
+- **structlog** — structured JSON logging
+- **Alembic** — миграции БД

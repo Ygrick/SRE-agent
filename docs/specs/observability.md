@@ -17,7 +17,9 @@
 - Каждый agent step → span: tool call, shell command, qdrant search
 - Parent-child: investigation → LLM calls → tool calls
 
-**Metrics (export в Prometheus формате):**
+**Экспорт метрик:** Через `opentelemetry-exporter-prometheus` — единый OTel SDK для traces и metrics. Endpoint `/metrics` создаётся автоматически, Prometheus скрейпит его.
+
+**Metrics:**
 
 | Метрика | Тип | Labels | Источник |
 |---|---|---|---|
@@ -94,14 +96,26 @@ scrape_configs:
 
 ### Langfuse
 
-**Интеграция:**
-- Gateway: `langfuse.trace()` на каждый LLM-запрос
-- Agent: `langfuse.trace()` на каждое расследование (parent trace), LLM calls и tool calls как child spans
-- Атрибуты: model, provider, tokens, cost, latency, status, investigation_id
+Два уровня трейсинга:
+
+**Уровень A — Gateway-level (автоматический):**
+- Gateway оборачивает каждый LLM-запрос в `langfuse.trace()`
+- Span: `llm_request` с атрибутами: provider, model, tokens_in, tokens_out, cost, latency, TTFT, status
+- Работает для всех агентов без дополнительной интеграции
+
+**Уровень B — Agent-level (парсинг `codex exec --json`):**
+- Webhook handler запускает `codex exec --json` и парсит structured event stream из stdout
+- Parent trace: `investigation` (alert_id, host, severity, duration)
+- Child spans:
+  - `llm_call` — каждый вызов LLM (коррелируется с Gateway spans через request_id)
+  - `shell_command` — command, exit_code, stdout (truncated), duration
+  - `tool_call` — qdrant_search / telegram_send: input, output, duration
+
+**Атрибуты:** model, provider, tokens, cost, latency, status, investigation_id
 
 **Retention:** 14 дней (configurable).
 
-**Self-hosted:** Docker container с PostgreSQL (отдельная БД от основной).
+**Self-hosted:** Docker container с отдельной PostgreSQL (не основная БД).
 
 ## Zabbix (мониторинг полигона)
 
@@ -136,16 +150,38 @@ Body:
 
 ## Structured Logging
 
-Все сервисы логируют в stdout в формате JSON:
+**Библиотека:** `structlog` — structured JSON logging с автоматическим добавлением `trace_id` / `span_id` из OpenTelemetry контекста.
 
+**Конфигурация (общая для всех сервисов):**
+```python
+import structlog
+from structlog.stdlib import add_log_level, ProcessorFormatter
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        # Автоматически добавляет trace_id, span_id из OTel
+        structlog.processors.CallsiteParameterAdder(
+            [structlog.processors.CallsiteParameter.FUNC_NAME]
+        ),
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+)
+```
+
+**Пример вывода:**
 ```json
 {
   "timestamp": "2026-03-23T10:15:00.123Z",
-  "level": "INFO",
+  "level": "info",
   "service": "llm-gateway",
-  "trace_id": "abc123",
-  "span_id": "def456",
-  "message": "LLM request completed",
+  "trace_id": "abc123def456",
+  "span_id": "789abc",
+  "event": "llm_request_completed",
   "provider": "vllm-local",
   "model": "qwen-2.5-coder-7b",
   "latency_ms": 1234,
@@ -154,3 +190,5 @@ Body:
   "status": 200
 }
 ```
+
+Корреляция логов с трейсами: `trace_id` в логах совпадает с trace_id в Langfuse и OTel spans, что позволяет переходить из Grafana Logs → Langfuse Trace.

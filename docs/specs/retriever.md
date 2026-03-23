@@ -39,7 +39,7 @@ runbooks/*.md → Splitter → Chunks → Embedder → Qdrant
 
 1. **Парсинг:** Чтение `.md` файлов из директории
 2. **Chunking:** Split по заголовкам H1/H2 (сохранение семантической целостности). Если секция > 512 tokens → дополнительный split с overlap 64 tokens
-3. **Embedding:** Модель `text-embedding-3-small` (через Gateway) или локальная (sentence-transformers)
+3. **Embedding:** Локальная модель `intfloat/multilingual-e5-small` (384-мерные векторы, CPU, поддержка русского/английского). Запускается in-process через `sentence-transformers`, не требует GPU и не ходит через Gateway.
 4. **Upsert:** В коллекцию Qdrant `runbooks`
 
 ### Qdrant Collection
@@ -48,7 +48,7 @@ runbooks/*.md → Splitter → Chunks → Embedder → Qdrant
 {
   "collection_name": "runbooks",
   "vectors": {
-    "size": 1536,
+    "size": 384,
     "distance": "Cosine"
   }
 }
@@ -76,7 +76,7 @@ runbooks/*.md → Splitter → Chunks → Embedder → Qdrant
 **Input:** текстовый запрос (описание инцидента)
 
 **Process:**
-1. Embedding запроса (та же модель, что при индексации)
+1. Embedding запроса через `intfloat/multilingual-e5-small` (та же модель, что при индексации)
 2. `qdrant_client.search(collection="runbooks", query_vector=embedding, limit=3, score_threshold=0.7)`
 3. Конкатенация текстов найденных chunks
 
@@ -100,5 +100,4 @@ runbooks/*.md → Splitter → Chunks → Embedder → Qdrant
 ## Зависимости
 
 - **Qdrant** — векторная БД
-- **LLM Gateway** — для embedding запросов (или локальная модель)
-- **sentence-transformers** (опционально) — для локальных embeddings
+- **sentence-transformers** — для embedding (модель `intfloat/multilingual-e5-small`, запускается локально на CPU)

@@ -29,7 +29,9 @@ services:
     build: ./agent
     ports: ["8002:8002"]
     env_file: .env
-    depends_on: [llm-gateway, agent-registry, qdrant]
+    volumes:
+      - playground_ssh_keys:/run/secrets/ssh:ro
+    depends_on: [llm-gateway, agent-registry, qdrant, playground-app]
 
   # === Хранение ===
   postgres:
@@ -97,11 +99,20 @@ services:
   # === Полигон ===
   playground-app:
     build: ./playground
-    ports: ["8090:8090"]
+    ports:
+      - "8090:8090"
+      - "2222:22"       # SSH для SRE-агента
+    volumes:
+      - playground_ssh_keys:/home/sre-agent/.ssh:ro
+    depends_on: [playground-postgres, playground-redis]
 
   playground-postgres:
     image: postgres:16-alpine
     ports: ["5433:5432"]
+    environment:
+      POSTGRES_DB: playground
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
   playground-redis:
     image: redis:7-alpine
@@ -121,6 +132,7 @@ volumes:
   grafana_data:
   langfuse_pg_data:
   zabbix_pg_data:
+  playground_ssh_keys:   # SSH ключи для доступа SRE-агента к полигону
 ```
 
 ## Конфигурация (pydantic-settings)
@@ -174,6 +186,10 @@ class AgentSettings(BaseSettings):
     codex_model: str = Field(default="qwen-2.5-coder-7b")
     max_shell_commands: int = Field(default=15)
     investigation_timeout_seconds: int = Field(default=300)
+    playground_ssh_host: str = Field(default="playground-app")
+    playground_ssh_port: int = Field(default=22)
+    playground_ssh_user: str = Field(default="sre-agent")
+    playground_ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
 ```
 
 ## Файл `.env` (пример)
@@ -238,6 +254,31 @@ curl http://localhost:8002/health
 # http://localhost:3000 (admin/admin)
 ```
 
+## Миграции БД
+
+**Инструмент:** Alembic (автогенерация миграций из SQLAlchemy моделей).
+
+```bash
+# Создать миграцию
+uv run alembic revision --autogenerate -m "description"
+
+# Применить миграции
+uv run alembic upgrade head
+
+# При старте в Docker — миграции применяются автоматически (entrypoint)
+```
+
+**Структура:**
+```
+alembic/
+├── alembic.ini
+├── env.py
+└── versions/
+    ├── 001_initial_providers.py
+    ├── 002_agent_cards.py
+    └── 003_api_keys.py
+```
+
 ## Версии компонентов
 
 | Компонент | Версия |
@@ -245,14 +286,23 @@ curl http://localhost:8002/health
 | Python | 3.12+ |
 | FastAPI | 0.115+ |
 | Pydantic | 2.x |
+| pydantic-settings | 2.x |
 | httpx | 0.28+ |
+| SQLAlchemy | 2.x (async) |
+| Alembic | 1.x |
+| asyncpg | 0.30+ |
 | a2a-sdk | 0.3+ |
+| structlog | 24.x |
+| opentelemetry-sdk | 1.x |
+| opentelemetry-exporter-prometheus | 0.x |
+| langfuse | 2.x (Python SDK) |
+| sentence-transformers | 3.x |
+| locust | 2.x |
 | PostgreSQL | 16 |
 | Qdrant | latest (1.12+) |
 | Prometheus | latest (2.x) |
 | Grafana | latest (11.x) |
-| Langfuse | latest (2.x) |
+| Langfuse Server | latest (2.x, self-hosted) |
 | Zabbix | 7.x |
 | Redis | 7.x |
 | Codex CLI | latest |
-| OpenTelemetry SDK | 1.x |
