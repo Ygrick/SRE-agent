@@ -132,21 +132,7 @@ scrape_configs:
 
 ### Webhook
 
-```
-Action: Send to URL
-URL: http://sre-agent:8002/webhooks/zabbix
-Method: POST
-Content-Type: application/json
-Body:
-{
-  "alert_id": "{EVENT.ID}",
-  "host": "{HOST.NAME}",
-  "trigger": "{TRIGGER.NAME}",
-  "severity": "{TRIGGER.SEVERITY}",
-  "timestamp": "{EVENT.DATE} {EVENT.TIME}",
-  "description": "{TRIGGER.DESCRIPTION}"
-}
-```
+Формат payload и обработка: [sre-agent.md](sre-agent.md#webhook-handler)
 
 ## Structured Logging
 

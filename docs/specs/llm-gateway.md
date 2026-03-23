@@ -110,20 +110,9 @@ ema = alpha * current_latency + (1 - alpha) * prev_ema
 - Метрики TTFT/TPOT собираются в реальном времени по таймингу чанков
 - При разрыве соединения с провайдером → ошибка прокидывается клиенту (retry на уровне клиента)
 
-## Метрики (OpenTelemetry)
+## Метрики
 
-| Метрика | Тип | Labels |
-|---|---|---|
-| `llm_gateway_requests_total` | Counter | provider, model, status_code |
-| `llm_gateway_request_duration_seconds` | Histogram | provider, model |
-| `llm_gateway_ttft_seconds` | Histogram | provider, model |
-| `llm_gateway_tpot_seconds` | Histogram | provider, model |
-| `llm_gateway_tokens_input_total` | Counter | provider, model |
-| `llm_gateway_tokens_output_total` | Counter | provider, model |
-| `llm_gateway_cost_dollars_total` | Counter | provider, model |
-| `llm_gateway_provider_health` | Gauge | provider (0=open, 0.5=half_open, 1=closed) |
-| `llm_gateway_active_streams` | Gauge | provider |
-| `llm_gateway_guardrails_blocked_total` | Counter | rule |
+Полный список метрик с типами, labels и bucket-конфигурациями: [observability.md](observability.md#opentelemetry-sdk)
 
 ## Ошибки
 

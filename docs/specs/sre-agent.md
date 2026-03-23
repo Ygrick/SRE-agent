@@ -130,11 +130,7 @@ HTTP 202 Accepted (асинхронная обработка).
 }
 ```
 
-**Реализация:**
-- Embedding запроса через Gateway (model: text-embedding-3-small или локальная)
-- Cosine similarity search в Qdrant
-- Top-3 results, score > 0.7
-- Возврат: concatenated text chunks
+**Реализация:** см. [retriever.md](retriever.md) — embedding `intfloat/multilingual-e5-small`, cosine similarity, top-3, score > 0.7
 
 ### telegram_send
 

@@ -89,12 +89,4 @@ flowchart TD
     style DONE fill:#27ae60,color:#fff
 ```
 
-## Ограничения по времени
-
-| Этап | Timeout |
-|---|---|
-| Одна shell-команда | 30s |
-| Один LLM-запрос (TTFT) | 30s (vLLM) / 60s (OpenRouter) |
-| Полный цикл диагностики | 5 min |
-| Qdrant search | 5s |
-| Telegram send | 10s per attempt, 3 retries |
+Таймауты и SLA: [system-design.md](../system-design.md#9-ограничения)
