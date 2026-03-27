@@ -12,13 +12,26 @@
 
 ```yaml
 services:
-  # === Платформа ===
-  llm-gateway:
-    build: ./gateway
-    ports: ["8000:8000"]
+  # === LLM Gateway (LiteLLM) ===
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    ports: ["4000:4000"]
     env_file: .env
-    depends_on: [postgres, langfuse]
+    volumes:
+      - ./gateway/litellm_config.yaml:/app/config.yaml
+      - ./gateway/custom_guardrail.py:/app/custom_guardrail.py
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on: [litellm-postgres, langfuse]
 
+  litellm-postgres:
+    image: postgres:16-alpine
+    volumes: ["litellm_pg_data:/var/lib/postgresql/data"]
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  # === Наши сервисы ===
   agent-registry:
     build: ./registry
     ports: ["8001:8001"]
@@ -31,7 +44,7 @@ services:
     env_file: .env
     volumes:
       - playground_ssh_keys:/run/secrets/ssh:ro
-    depends_on: [llm-gateway, agent-registry, qdrant, playground-app]
+    depends_on: [litellm, agent-registry, qdrant, playground-app]
 
   # === Хранение ===
   postgres:
@@ -128,47 +141,32 @@ services:
 
 volumes:
   postgres_data:
+  litellm_pg_data:
   qdrant_data:
   grafana_data:
   langfuse_pg_data:
   zabbix_pg_data:
-  playground_ssh_keys:   # SSH ключи для доступа SRE-агента к полигону
+  playground_ssh_keys:
 ```
 
-## Конфигурация (pydantic-settings)
+## Конфигурация
 
-### Gateway Settings
+### LiteLLM Gateway
 
-```python
-class GatewaySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_", env_file=".env")
+Конфигурация через `gateway/litellm_config.yaml` — см. [llm-gateway.md](llm-gateway.md).
 
-    host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000)
-    database_url: str = Field(description="PostgreSQL connection string")
-    encryption_key: str = Field(description="Fernet key for encrypting provider API keys")
-    jwt_secret: str = Field(default="", description="JWT signing secret (if JWT auth enabled)")
-
-    # Balancing
-    circuit_breaker_failure_threshold: int = Field(default=3)
-    circuit_breaker_recovery_timeout_seconds: int = Field(default=30)
-    circuit_breaker_backoff_multiplier: float = Field(default=2.0)
-    ema_alpha: float = Field(default=0.3)
-
-    # Guardrails
-    guardrails_prompt_injection_enabled: bool = Field(default=True)
-    guardrails_secret_leak_enabled: bool = Field(default=True)
-    guardrails_llm_classifier_enabled: bool = Field(default=False)
-    guardrails_whitelist_agent_ids: list[str] = Field(default_factory=list)
-
-    # Observability
-    langfuse_public_key: str = Field(default="")
-    langfuse_secret_key: str = Field(default="")
-    langfuse_host: str = Field(default="http://langfuse:3000")
-    prometheus_enabled: bool = Field(default=True)
+Переменные среды для LiteLLM:
+```env
+LITELLM_MASTER_KEY=sk-master-<generated>
+LITELLM_DATABASE_URL=postgresql://ai_sre:<password>@litellm-postgres:5432/litellm
+VLLM_API_KEY=<vllm-token-if-any>
+OPENROUTER_API_KEY=<openrouter-key>
+LANGFUSE_PUBLIC_KEY=<pk>
+LANGFUSE_SECRET_KEY=<sk>
+LANGFUSE_HOST=http://langfuse:3000
 ```
 
-### Agent Settings
+### Agent Settings (pydantic-settings)
 
 ```python
 class AgentSettings(BaseSettings):
@@ -176,8 +174,8 @@ class AgentSettings(BaseSettings):
 
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8002)
-    gateway_url: str = Field(default="http://llm-gateway:8000")
-    gateway_api_key: str = Field(description="API key for LLM Gateway")
+    gateway_url: str = Field(default="http://litellm:4000")
+    gateway_api_key: str = Field(description="LiteLLM virtual key")
     registry_url: str = Field(default="http://agent-registry:8001")
     qdrant_url: str = Field(default="http://qdrant:6333")
     qdrant_collection: str = Field(default="runbooks")
@@ -192,31 +190,47 @@ class AgentSettings(BaseSettings):
     playground_ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
 ```
 
+### Registry Settings (pydantic-settings)
+
+```python
+class RegistrySettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="REGISTRY_", env_file=".env")
+
+    host: str = Field(default="0.0.0.0")
+    port: int = Field(default=8001)
+    database_url: str = Field(description="PostgreSQL connection string")
+    api_key: str = Field(description="API key for registry access")
+```
+
 ## Файл `.env` (пример)
 
 ```env
-# PostgreSQL
+# PostgreSQL (общий пользователь)
 POSTGRES_USER=ai_sre
 POSTGRES_PASSWORD=<generate-secure-password>
 
-# Gateway
-GATEWAY_DATABASE_URL=postgresql://ai_sre:<password>@postgres:5432/ai_sre
-GATEWAY_ENCRYPTION_KEY=<fernet-key>
-GATEWAY_JWT_SECRET=<jwt-secret>
+# LiteLLM Gateway
+LITELLM_MASTER_KEY=sk-master-<generated>
+LITELLM_DATABASE_URL=postgresql://ai_sre:<password>@litellm-postgres:5432/litellm
+
+# LLM Providers
+VLLM_API_KEY=<token>
+OPENROUTER_API_KEY=<key>
+
+# Langfuse
+LANGFUSE_PUBLIC_KEY=<pk>
+LANGFUSE_SECRET_KEY=<sk>
+LANGFUSE_HOST=http://langfuse:3000
 
 # Agent
-AGENT_GATEWAY_API_KEY=sk-sre-<generated>
+AGENT_GATEWAY_URL=http://litellm:4000
+AGENT_GATEWAY_API_KEY=sk-sre-<virtual-key>
 AGENT_TELEGRAM_BOT_TOKEN=<bot-token>
 AGENT_TELEGRAM_CHAT_ID=<chat-id>
 
-# LLM Providers (задаются через Admin API, не через env)
-
-# Langfuse
-GATEWAY_LANGFUSE_PUBLIC_KEY=<pk>
-GATEWAY_LANGFUSE_SECRET_KEY=<sk>
-
-# OpenRouter (для регистрации через Admin API)
-OPENROUTER_API_KEY=<key>
+# Registry
+REGISTRY_DATABASE_URL=postgresql://ai_sre:<password>@postgres:5432/ai_sre
+REGISTRY_API_KEY=<generated>
 ```
 
 ## Запуск
@@ -227,28 +241,22 @@ git clone <repo-url> && cd sre-agent
 
 # 2. Скопировать и заполнить .env
 cp .env.example .env
-# Отредактировать .env
 
 # 3. Запустить всё
 docker compose up -d
 
-# 4. Проиндексировать Runbooks
+# 4. Создать virtual key для SRE-агента
+curl -X POST http://localhost:4000/key/generate \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  -d '{"key_alias": "sre-agent-01", "max_budget": 10.0}'
+
+# 5. Проиндексировать Runbooks
 docker compose exec sre-agent uv run python scripts/index_runbooks.py
 
-# 5. Зарегистрировать LLM-провайдеров
-curl -X POST http://localhost:8000/providers -H "Content-Type: application/json" -d '{
-  "name": "vllm-local",
-  "base_url": "http://vllm:8000/v1",
-  "models": ["qwen-2.5-coder-7b"],
-  "price_per_input_token": 0.0,
-  "price_per_output_token": 0.0,
-  "priority": 1
-}'
-
 # 6. Проверить health
-curl http://localhost:8000/health
-curl http://localhost:8001/health
-curl http://localhost:8002/health
+curl http://localhost:4000/health     # LiteLLM
+curl http://localhost:8001/health     # Registry
+curl http://localhost:8002/health     # SRE Agent
 
 # 7. Открыть Grafana
 # http://localhost:3000 (admin/admin)
@@ -256,7 +264,9 @@ curl http://localhost:8002/health
 
 ## Миграции БД
 
-**Инструмент:** Alembic (автогенерация миграций из SQLAlchemy моделей).
+**LiteLLM:** Использует Prisma, миграции применяются автоматически при старте.
+
+**Agent Registry:** Alembic (автогенерация миграций из SQLAlchemy моделей).
 
 ```bash
 # Создать миграцию
@@ -270,24 +280,23 @@ uv run alembic upgrade head
 
 **Структура:**
 ```
-alembic/
+registry/
 ├── alembic.ini
-├── env.py
-└── versions/
-    ├── 001_initial_providers.py
-    ├── 002_agent_cards.py
-    └── 003_api_keys.py
+├── alembic/
+│   ├── env.py
+│   └── versions/
+│       └── 001_initial_agent_cards.py
 ```
 
 ## Версии компонентов
 
 | Компонент | Версия |
 |---|---|
+| **Наш код** | |
 | Python | 3.12+ |
 | FastAPI | 0.115+ |
 | Pydantic | 2.x |
 | pydantic-settings | 2.x |
-| httpx | 0.28+ |
 | SQLAlchemy | 2.x (async) |
 | Alembic | 1.x |
 | asyncpg | 0.30+ |
@@ -298,11 +307,13 @@ alembic/
 | langfuse | 2.x (Python SDK) |
 | sentence-transformers | 3.x |
 | locust | 2.x |
-| PostgreSQL | 16 |
+| **Docker images** | |
+| LiteLLM Proxy | main-stable |
+| PostgreSQL | 16-alpine |
 | Qdrant | latest (1.12+) |
 | Prometheus | latest (2.x) |
 | Grafana | latest (11.x) |
-| Langfuse Server | latest (2.x, self-hosted) |
+| Langfuse Server | latest (2.x) |
 | Zabbix | 7.x |
 | Redis | 7.x |
 | Codex CLI | latest |

@@ -2,127 +2,113 @@
 
 ## Назначение
 
-Контроль доступа к LLM Gateway и Agent Registry. Агенты и внешние клиенты должны предъявить валидный токен для использования платформы.
+Контроль доступа к LLM Gateway и Agent Registry. Используем встроенную систему авторизации LiteLLM для Gateway и собственную для Agent Registry.
 
-## Механизм
+## LiteLLM Auth (Gateway)
 
-### API Key (основной для PoC)
+### Master Key
 
-Простой статический токен, выданный агенту при регистрации.
+Административный ключ для управления LiteLLM (создание virtual keys, моделей, etc.):
 
-```
-Authorization: Bearer <api-key>
-```
-
-**Хранение:**
-- Ключи хранятся в PostgreSQL, зашифрованы Fernet (симметричное шифрование)
-- Fernet key — из переменной среды `ENCRYPTION_KEY`
-- В таблице хранится: `key_hash` (SHA-256 для быстрого lookup) + `key_encrypted` (для расшифровки при необходимости)
-
-**Таблица `api_keys`:**
-```sql
-CREATE TABLE api_keys (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id TEXT NOT NULL REFERENCES agents(agent_id),
-    key_hash TEXT NOT NULL UNIQUE,
-    key_encrypted TEXT NOT NULL,
-    name TEXT NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    expires_at TIMESTAMPTZ,
-    last_used_at TIMESTAMPTZ
-);
+```env
+LITELLM_MASTER_KEY=sk-master-<generated>
 ```
 
-### JWT (опциональный, для расширения)
+Используется Platform Admin для конфигурации. Не выдаётся агентам.
 
-Для сценариев с expiration и claims:
+### Virtual Keys (основной механизм для агентов)
 
-```python
-class JWTPayload(BaseModel):
-    sub: str          # agent_id
-    exp: datetime     # expiration
-    iat: datetime     # issued at
-    scope: list[str]  # ["llm:chat", "registry:read"]
-```
+LiteLLM хранит virtual keys в PostgreSQL со spend tracking и rate limiting.
 
-**Signing:** HS256, secret из `JWT_SECRET` env var.
-
-## API для управления ключами
-
-```
-POST   /auth/keys              — создание ключа для агента
-GET    /auth/keys              — список ключей (admin)
-DELETE /auth/keys/{key_id}     — отзыв ключа
-```
-
-### Создание ключа
-
-```
-POST /auth/keys
-{
-  "agent_id": "sre-agent-01",
-  "name": "production-key",
-  "expires_at": "2026-12-31T23:59:59Z"  // optional
-}
+**Создание ключа:**
+```bash
+curl -X POST http://litellm:4000/key/generate \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key_alias": "sre-agent-01",
+    "max_budget": 10.0,
+    "budget_duration": "30d",
+    "max_parallel_requests": 5,
+    "tpm_limit": 100000,
+    "rpm_limit": 60,
+    "metadata": {"agent_id": "sre-agent-01"}
+  }'
 ```
 
 **Ответ:**
 ```json
 {
-  "key_id": "uuid",
-  "api_key": "sk-sre-xxxxxxxxxxxxxxxx",
-  "agent_id": "sre-agent-01",
-  "name": "production-key",
-  "expires_at": "2026-12-31T23:59:59Z"
+  "key": "sk-sre-xxxxxxxxxxxxxxxx",
+  "key_name": "sre-agent-01",
+  "max_budget": 10.0,
+  "expires": null
 }
 ```
 
-`api_key` возвращается **только при создании**. После этого доступен только `key_id`.
+Ключ возвращается **только при создании**.
 
-## Per-Provider API Key Management
+**Использование агентом:**
+```
+Authorization: Bearer sk-sre-xxxxxxxxxxxxxxxx
+```
 
-Ключи для LLM-провайдеров (OpenRouter API key, vLLM token):
+### Встроенные ограничения per key
 
-- Хранятся в таблице `providers`, поле `api_key_encrypted`
-- Шифрование: Fernet
-- Gateway расшифровывает ключ при проксировании запроса к провайдеру
-- Ключи никогда не возвращаются через API (только `***masked***`)
+| Параметр | Описание | Default для SRE-агента |
+|---|---|---|
+| `max_budget` | Бюджет в USD | 10.0 per 30d |
+| `rpm_limit` | Requests per minute | 60 |
+| `tpm_limit` | Tokens per minute | 100000 |
+| `max_parallel_requests` | Concurrent streams | 5 |
 
-## Auth Middleware (Gateway)
+При превышении → HTTP 429 с описанием (`RateLimitError` / `BudgetExceeded`).
+
+### JWT (опциональный)
+
+LiteLLM поддерживает JWT auth для сценариев с SSO/Teams:
+
+```yaml
+general_settings:
+  enable_jwt_auth: true
+  litellm_jwtauth:
+    team_id_jwt_field: "team_id"
+    user_id_jwt_field: "sub"
+```
+
+Для PoC используем Virtual Keys (проще). JWT — для расширения.
+
+## Agent Registry Auth
+
+Agent Registry — наш собственный сервис (FastAPI), не LiteLLM.
+
+**Механизм:** Shared API key (`REGISTRY_API_KEY` в .env), проверяется middleware.
 
 ```python
-async def auth_middleware(request: Request, call_next):
-    token = extract_bearer_token(request)
-    if not token:
-        raise HTTPException(401, "Missing authorization token")
-
-    agent = await validate_token(token)
-    if not agent:
-        raise HTTPException(401, "Invalid or expired token")
-
-    request.state.agent_id = agent.agent_id
-    request.state.scopes = agent.scopes
-
+async def registry_auth_middleware(request: Request, call_next: Callable) -> Response:
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+    if not hmac.compare_digest(token, settings.registry_api_key):
+        raise HTTPException(401, "Invalid registry API key")
     return await call_next(request)
 ```
 
-## Rate Limiting (per agent)
+## Per-Provider API Key Management
 
-| Параметр | Default |
-|---|---|
-| Requests per minute | 60 |
-| Requests per hour | 1000 |
-| Concurrent streams | 5 |
+Ключи LLM-провайдеров (vLLM, OpenRouter) задаются в `config.yaml`:
 
-Лимиты configurable per agent через `api_keys` metadata.
+```yaml
+litellm_params:
+  api_key: "os.environ/OPENROUTER_API_KEY"
+```
 
-Реализация: in-memory sliding window counter (per agent_id). При превышении → HTTP 429 с `Retry-After` header.
+- Ключи читаются из environment variables (не хранятся в БД)
+- LiteLLM никогда не возвращает ключи через API
+- В Docker: передаются через `env_file: .env`
 
 ## Ошибки
 
 | Код | Когда |
 |---|---|
-| 401 | Отсутствует или невалидный токен |
-| 403 | Токен валиден, но нет прав (scope) |
-| 429 | Rate limit exceeded |
+| 401 | Отсутствует или невалидный ключ |
+| 403 | Ключ валиден, но нет прав |
+| 429 | Rate limit / budget exceeded |

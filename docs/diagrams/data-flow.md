@@ -15,7 +15,7 @@ flowchart LR
     subgraph processing ["Обработка"]
         WH["Webhook<br/>Handler"]
         CODEX["Codex CLI"]
-        GW["LLM Gateway"]
+        GW["LiteLLM Proxy"]
     end
 
     subgraph llm ["LLM-провайдеры"]
@@ -52,7 +52,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     subgraph sources ["Источники данных"]
-        GW2["LLM Gateway"]
+        GW2["LiteLLM Proxy"]
         AGENT2["SRE Agent"]
     end
 
@@ -98,9 +98,8 @@ flowchart LR
 
 | Данные | Где | Retention | Формат |
 |---|---|---|---|
-| LLM провайдеры | PostgreSQL | Permanent | Relational |
-| Agent Cards | PostgreSQL | Permanent | JSONB (A2A spec) |
-| API keys (encrypted) | PostgreSQL | Permanent | Fernet-encrypted |
+| LLM deployments, virtual keys, spend | PostgreSQL (LiteLLM DB) | Permanent | Prisma |
+| Agent Cards | PostgreSQL (Registry DB) | Permanent | JSONB (A2A spec) |
 | Runbook embeddings | Qdrant | Permanent | Vectors + metadata |
 | Time-series metrics | Prometheus | 30 дней | TSDB |
 | LLM traces | Langfuse | 14 дней | Spans, events |
@@ -112,6 +111,6 @@ flowchart LR
 | LLM-запросы: prompt, completion, model, tokens, latency, cost | Langfuse | Трейсинг, cost tracking |
 | Tool calls: команда, stdout, duration | Langfuse | Анализ поведения агента |
 | RPS, latency p50/p95, TTFT, TPOT, error rate | Prometheus → Grafana | Операционный мониторинг |
-| Circuit breaker state changes | Prometheus + stdout | Alerting |
+| Cooldown state changes | Prometheus + stdout | Alerting |
 | Guardrails срабатывания | Langfuse + stdout | Security audit |
 | Auth failures | stdout (JSON) | Security audit |

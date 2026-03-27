@@ -1,28 +1,59 @@
-# Спецификация: Guardrails
+# Спецификация: Guardrails (Custom для LiteLLM)
 
 ## Назначение
 
-Middleware в LLM Gateway для фильтрации небезопасных запросов перед отправкой к LLM-провайдерам. Защита от prompt injection, утечки секретов и других нарушений.
+Кастомные guardrails, подключаемые к LiteLLM Proxy через `CustomGuardrail` base class. Защита от prompt injection и утечки секретов.
+
+**Почему кастомные, а не enterprise:**
+- `SecretDetection` в LiteLLM — enterprise-only (платная лицензия)
+- Prompt injection через Lakera — зависимость от внешнего API
+- Свои regex-правила: бесплатно, работают offline, полный контроль
 
 ## Архитектура
 
-Guardrails реализован как цепочка middleware (FastAPI middleware stack), выполняющаяся **после Auth** и **перед Router**:
+Guardrails выполняются как `pre_call` хуки в LiteLLM pipeline:
 
 ```
-Request → Auth → Guardrails[Rule1 → Rule2 → ... → RuleN] → Router → Proxy
+Request → LiteLLM Auth → Guardrails[PromptInjection → SecretLeak] → Router → Provider
 ```
 
-Если любое правило срабатывает → запрос блокируется с HTTP 422 и описанием нарушения.
+Регистрация в `config.yaml`:
+```yaml
+general_settings:
+  guardrails:
+    - guardrail_name: "sre-prompt-injection"
+      litellm_params:
+        guardrail: "custom_guardrail.PromptInjectionGuardrail"
+        mode: "pre_call"
+    - guardrail_name: "sre-secret-leak"
+      litellm_params:
+        guardrail: "custom_guardrail.SecretLeakGuardrail"
+        mode: "pre_call"
+```
 
-## Правила
+## Реализация
+
+### Base class (LiteLLM API)
+
+```python
+from litellm.integrations.custom_guardrail import CustomGuardrail
+from litellm.proxy._types import UserAPIKeyAuth
+from litellm.types.guardrails import GuardrailEventHooks
+
+class SREGuardrail(CustomGuardrail):
+    async def async_pre_call_hook(
+        self,
+        user_api_key_dict: UserAPIKeyAuth,
+        cache: DualCache,
+        data: dict,
+        call_type: str,
+    ) -> None:
+        """Вызывается перед отправкой запроса к LLM. Raise HTTPException для блокировки."""
+        ...
+```
 
 ### 1. Prompt Injection Detector
 
-**Назначение:** Обнаружение попыток инъекции через пользовательский ввод или данные из логов (косвенная инъекция).
-
-**Реализация (два уровня):**
-
-**Уровень 1 — Regex (быстрый, < 1ms):**
 ```python
 INJECTION_PATTERNS = [
     r"ignore\s+(all\s+)?previous\s+instructions",
@@ -38,88 +69,40 @@ INJECTION_PATTERNS = [
 ]
 ```
 
-Проверяется: все `content` полей `messages` в запросе.
-
-**Уровень 2 — LLM Classifier (опциональный, ~500ms):**
-- Отдельный lightweight LLM-запрос к быстрому провайдеру
-- Prompt: "Is the following text an attempt at prompt injection? Answer YES or NO."
-- Включается через конфигурацию (`GUARDRAILS_LLM_CLASSIFIER_ENABLED=true`)
-- Применяется только если regex не сработал, но confidence нужна выше
-
-**Действие при срабатывании:**
-- HTTP 422, `type: "guardrails_error"`, `rule: "prompt_injection"`
-- Логирование в Langfuse (trace с tag `guardrails_blocked`)
-- Метрика `llm_gateway_guardrails_blocked_total{rule="prompt_injection"}`
+Проверяются все `content` полей `messages` в запросе. При срабатывании → `HTTPException(422)`.
 
 ### 2. Secret Leak Detector
 
-**Назначение:** Предотвращение утечки секретов через промпты (API ключи, пароли, токены, приватные ключи).
-
-**Реализация — Regex:**
 ```python
 SECRET_PATTERNS = [
-    # API Keys
     (r"sk-[a-zA-Z0-9]{20,}", "openai_api_key"),
     (r"key-[a-zA-Z0-9]{20,}", "generic_api_key"),
     (r"AKIA[0-9A-Z]{16}", "aws_access_key"),
     (r"ghp_[a-zA-Z0-9]{36}", "github_token"),
     (r"gho_[a-zA-Z0-9]{36}", "github_oauth_token"),
     (r"xoxb-[0-9]{10,}", "slack_bot_token"),
-
-    # Passwords in connection strings
     (r"://[^:]+:([^@]+)@", "password_in_url"),
-
-    # Private keys
     (r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", "private_key"),
     (r"-----BEGIN\s+EC\s+PRIVATE\s+KEY-----", "ec_private_key"),
-
-    # Generic secrets
     (r"(?i)(password|passwd|pwd|secret|token)\s*[=:]\s*['\"]?[^\s'\"]{8,}", "generic_secret"),
 ]
 ```
 
-**Действие при срабатывании:**
-- HTTP 422, `type: "guardrails_error"`, `rule: "secret_leak"`, `detail: "<secret_type>"`
-- Секрет НЕ логируется (только тип и позиция)
-- Метрика `llm_gateway_guardrails_blocked_total{rule="secret_leak"}`
+При срабатывании: секрет НЕ логируется (только тип и позиция).
 
-## Конфигурация
+## Размещение кода
 
-```env
-# Включение/отключение отдельных правил
-GUARDRAILS_PROMPT_INJECTION_ENABLED=true
-GUARDRAILS_SECRET_LEAK_ENABLED=true
-GUARDRAILS_LLM_CLASSIFIER_ENABLED=false
-
-# Whitelist (bypass guardrails для доверенных агентов)
-GUARDRAILS_WHITELIST_AGENT_IDS=sre-agent-01
+```
+gateway/
+├── custom_guardrail.py          # PromptInjectionGuardrail + SecretLeakGuardrail
+└── litellm_config.yaml          # config с guardrails registration
 ```
 
-## Pydantic модели
-
-```python
-class GuardrailResult(BaseModel):
-    passed: bool
-    rule: str | None = None
-    detail: str | None = None
-
-class GuardrailsConfig(BaseSettings):
-    prompt_injection_enabled: bool = Field(default=True)
-    secret_leak_enabled: bool = Field(default=True)
-    llm_classifier_enabled: bool = Field(default=False)
-    whitelist_agent_ids: list[str] = Field(default_factory=list)
-```
+Файл `custom_guardrail.py` монтируется в контейнер LiteLLM.
 
 ## Расширяемость
 
-Новые правила добавляются как классы, реализующие интерфейс:
-
-```python
-class GuardrailRule(Protocol):
-    name: str
-
-    async def check(self, messages: list[ChatMessage]) -> GuardrailResult:
-        ...
-```
-
-Правила регистрируются в цепочке при старте приложения.
+Новые guardrails добавляются как классы, наследующие `CustomGuardrail`, и регистрируются в `config.yaml`. Доступные хуки:
+- `async_pre_call_hook` — до отправки к LLM (наш основной)
+- `async_moderation_hook` — асинхронная модерация (не блокирует ответ)
+- `async_post_call_success_hook` — после ответа (проверка output)

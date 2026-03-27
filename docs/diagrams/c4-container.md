@@ -11,7 +11,7 @@ flowchart TB
         direction TB
 
         subgraph core ["Ядро"]
-            gateway["<b>LLM API Gateway</b><br/>FastAPI · httpx<br/>Routing, балансировка,<br/>streaming, guardrails, auth"]
+            gateway["<b>LiteLLM Proxy</b><br/>OpenAI-compatible<br/>Routing, балансировка,<br/>streaming, guardrails, auth"]
             registry["<b>A2A Agent Registry</b><br/>FastAPI · a2a-sdk<br/>CRUD Agent Cards"]
             sre_agent["<b>SRE Agent</b><br/>FastAPI + Codex CLI<br/>Webhook handler,<br/>shell диагностика,<br/>MCP tools"]
         end
@@ -88,7 +88,7 @@ flowchart TB
 
 | Контейнер | Технология | Порт | Цвет на диаграмме |
 |---|---|---|---|
-| `llm-gateway` | Python 3.12, FastAPI, httpx | 8000 | Синий (core) |
+| `litellm` | LiteLLM Proxy (Docker image) | 4000 | Синий (core) |
 | `agent-registry` | Python 3.12, FastAPI, a2a-sdk | 8001 | Синий (core) |
 | `sre-agent` | Python 3.12, FastAPI + Codex CLI | 8002 | Синий (core) |
 | `postgres` | PostgreSQL 16 | 5432 | Голубой (storage) |

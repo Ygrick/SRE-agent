@@ -25,7 +25,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    G["Codex exec запущен"] --> LLM["Codex → Gateway:<br/>POST /v1/chat/completions"]
+    G["Codex exec запущен"] --> LLM["Codex → LiteLLM:<br/>POST /v1/chat/completions"]
 
     LLM --> AUTH{"Auth OK?"}
     AUTH -- "Fail" --> AUTH_ERR["401 → Сессия завершена"]
@@ -38,7 +38,7 @@ flowchart TD
     ROUTE -- "Да" --> PROXY["Streaming Proxy → Provider"]
 
     PROXY --> PROXY_OK{"Ответ получен?"}
-    PROXY_OK -- "Timeout/5xx" --> CB["Circuit Breaker: OPEN<br/>Retry другой провайдер"]
+    PROXY_OK -- "Timeout/5xx" --> CB["Cooldown: deployment excluded<br/>Retry другой провайдер"]
     CB --> ROUTE
     PROXY_OK -- "OK (SSE)" --> METRICS["Метрики: TTFT, TPOT,<br/>tokens, cost"]
 

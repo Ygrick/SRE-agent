@@ -2,52 +2,52 @@
 
 ## Назначение
 
-Сбор, хранение и визуализация метрик, логов и трейсов всей платформы. Два контура:
-1. **Платформа** — OpenTelemetry → Prometheus → Grafana + Langfuse
+Сбор, хранение и визуализация метрик, логов и трейсов. Два контура:
+1. **Платформа** — LiteLLM Prometheus + Grafana + Langfuse
 2. **Полигон** — Zabbix (мониторинг тестового сервиса, триггеры для SRE-агента)
 
 ## Компоненты
 
-### OpenTelemetry SDK
+### LiteLLM Prometheus Metrics
 
-Встроен в Gateway и Webhook Handler.
+LiteLLM экспортирует метрики через `success_callback: ["prometheus"]`.
 
-**Traces:**
-- Каждый LLM-запрос → span с атрибутами: provider, model, status, latency, tokens
-- Каждый agent step → span: tool call, shell command, qdrant search
-- Parent-child: investigation → LLM calls → tool calls
+**Метрики Gateway:**
 
-**Экспорт метрик:** Через `opentelemetry-exporter-prometheus` — единый OTel SDK для traces и metrics. Endpoint `/metrics` создаётся автоматически, Prometheus скрейпит его.
+| Метрика | Тип | Что измеряет |
+|---|---|---|
+| `litellm_proxy_total_requests_metric` | Counter | RPS по моделям и статусам |
+| `litellm_request_total_latency_metric` | Histogram | E2E latency запроса (p50/p95/p99) |
+| `litellm_llm_api_time_to_first_token_metric` | Histogram | TTFT |
+| `litellm_input_tokens_metric` | Counter | Input tokens |
+| `litellm_output_tokens_metric` | Counter | Output tokens |
+| `litellm_spend_metric` | Counter | Cost ($) |
+| `litellm_proxy_failed_requests_metric` | Counter | Error rate |
+| `litellm_deployment_failure_responses` | Counter | Failures per deployment |
+| `litellm_remaining_team_budget_metric` | Gauge | Остаток бюджета |
 
-**Metrics:**
+**Метрики SRE-агента (наш код, OTel SDK):**
 
-| Метрика | Тип | Labels | Источник |
-|---|---|---|---|
-| `llm_gateway_requests_total` | Counter | provider, model, status_code | Gateway |
-| `llm_gateway_request_duration_seconds` | Histogram (buckets: 0.1, 0.5, 1, 2, 5, 10, 30) | provider, model | Gateway |
-| `llm_gateway_ttft_seconds` | Histogram (buckets: 0.05, 0.1, 0.5, 1, 2, 5) | provider, model | Gateway |
-| `llm_gateway_tpot_seconds` | Histogram (buckets: 0.01, 0.02, 0.05, 0.1, 0.2) | provider, model | Gateway |
-| `llm_gateway_tokens_input_total` | Counter | provider, model | Gateway |
-| `llm_gateway_tokens_output_total` | Counter | provider, model | Gateway |
-| `llm_gateway_cost_dollars_total` | Counter | provider, model | Gateway |
-| `llm_gateway_provider_health` | Gauge | provider | Gateway |
-| `llm_gateway_active_streams` | Gauge | provider | Gateway |
-| `llm_gateway_guardrails_blocked_total` | Counter | rule | Gateway |
-| `sre_agent_investigations_total` | Counter | severity, status | Agent |
-| `sre_agent_investigation_duration_seconds` | Histogram | severity | Agent |
-| `sre_agent_shell_commands_total` | Counter | command_type | Agent |
+| Метрика | Тип | Что измеряет |
+|---|---|---|
+| `sre_agent_investigations_total` | Counter | Расследования по severity и status |
+| `sre_agent_investigation_duration_seconds` | Histogram | Длительность расследования |
+| `sre_agent_shell_commands_total` | Counter | Shell-команды по типам |
+
+Экспорт метрик агента: `opentelemetry-exporter-prometheus` → endpoint `/metrics` на порту 8002.
+
+**TPOT gap:** TPOT (time per output token) доступен только через OpenTelemetry, не через Prometheus callback LiteLLM. Решение: добавить `CustomLogger` callback (~30 строк), который считает TPOT из streaming chunks и экспортирует в Prometheus.
 
 ### Prometheus
 
-**Конфигурация:**
 ```yaml
 global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'llm-gateway'
+  - job_name: 'litellm'
     static_configs:
-      - targets: ['llm-gateway:8000']
+      - targets: ['litellm:4000']
     metrics_path: /metrics
 
   - job_name: 'sre-agent'
@@ -63,33 +63,30 @@ scrape_configs:
 **Дашборды:**
 
 #### 1. LLM Gateway Overview
-- RPS по провайдерам (stacked bar)
-- Latency p50/p95/p99 по провайдерам (time series)
-- Error rate по провайдерам (time series)
-- Active streams (gauge)
-- Provider health status (stat panels: green/yellow/red)
+- RPS по моделям и deployments (stacked bar)
+- Latency p50/p95/p99 (time series)
+- Error rate per deployment (time series)
+- Provider health / cooldown status
+- Spend per hour/day (stacked by deployment)
 
 #### 2. LLM Metrics
-- TTFT distribution по провайдерам (histogram heatmap)
-- TPOT distribution по провайдерам (histogram heatmap)
+- TTFT distribution (histogram heatmap)
 - Tokens in/out per minute (time series)
-- Cost per hour/day (time series, stacked by provider)
 - Cost per investigation (bar chart)
+- Budget remaining (gauge)
 
 #### 3. SRE Agent
 - Investigations per hour (time series)
 - Investigation duration p50/p95 (time series)
 - Shell commands per investigation (bar chart)
 - Success / failure rate (pie chart)
-- Guardrails blocks (time series)
 
 #### 4. System Health
-- CPU / Memory usage per container (time series)
-- Circuit breaker state changes (annotations)
+- CPU / Memory usage per container (time series, from cAdvisor or node-exporter)
 - Alerting rules triggered (log panel)
 
 **Alerting rules (Grafana Alerting):**
-- All LLM providers unhealthy > 1 min → Critical
+- All LLM deployments in cooldown > 1 min → Critical
 - Gateway error rate > 10% for 5 min → Warning
 - Investigation timeout rate > 50% → Warning
 - TTFT p95 > 5s → Warning
@@ -98,20 +95,19 @@ scrape_configs:
 
 Два уровня трейсинга:
 
-**Уровень A — Gateway-level (автоматический):**
-- Gateway оборачивает каждый LLM-запрос в `langfuse.trace()`
-- Span: `llm_request` с атрибутами: provider, model, tokens_in, tokens_out, cost, latency, TTFT, status
-- Работает для всех агентов без дополнительной интеграции
+**Уровень A — Gateway-level (LiteLLM native integration):**
+- `success_callback: ["langfuse"]` в config
+- LiteLLM автоматически записывает trace каждого LLM-запроса
+- Атрибуты: model, provider, tokens_in, tokens_out, cost, latency, TTFT, status
+- Per-team Langfuse routing через `default_team_settings` (если нужно)
 
 **Уровень B — Agent-level (парсинг `codex exec --json`):**
 - Webhook handler запускает `codex exec --json` и парсит structured event stream из stdout
 - Parent trace: `investigation` (alert_id, host, severity, duration)
 - Child spans:
-  - `llm_call` — каждый вызов LLM (коррелируется с Gateway spans через request_id)
+  - `llm_call` — каждый вызов LLM
   - `shell_command` — command, exit_code, stdout (truncated), duration
   - `tool_call` — qdrant_search / telegram_send: input, output, duration
-
-**Атрибуты:** model, provider, tokens, cost, latency, status, investigation_id
 
 **Retention:** 14 дней (configurable).
 
@@ -136,45 +132,20 @@ scrape_configs:
 
 ## Structured Logging
 
-**Библиотека:** `structlog` — structured JSON logging с автоматическим добавлением `trace_id` / `span_id` из OpenTelemetry контекста.
+**Для наших сервисов (Agent, Registry):** `structlog` — structured JSON logging.
 
-**Конфигурация (общая для всех сервисов):**
 ```python
-import structlog
-from structlog.stdlib import add_log_level, ProcessorFormatter
-
 structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
-        add_log_level,
+        structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        # Автоматически добавляет trace_id, span_id из OTel
-        structlog.processors.CallsiteParameterAdder(
-            [structlog.processors.CallsiteParameter.FUNC_NAME]
-        ),
         structlog.processors.JSONRenderer(),
     ],
     logger_factory=structlog.stdlib.LoggerFactory(),
 )
 ```
 
-**Пример вывода:**
-```json
-{
-  "timestamp": "2026-03-23T10:15:00.123Z",
-  "level": "info",
-  "service": "llm-gateway",
-  "trace_id": "abc123def456",
-  "span_id": "789abc",
-  "event": "llm_request_completed",
-  "provider": "vllm-local",
-  "model": "qwen-2.5-coder-7b",
-  "latency_ms": 1234,
-  "tokens_in": 500,
-  "tokens_out": 200,
-  "status": 200
-}
-```
+**Для LiteLLM:** встроенное логирование, конфигурируется через `set_verbose` и log level.
 
-Корреляция логов с трейсами: `trace_id` в логах совпадает с trace_id в Langfuse и OTel spans, что позволяет переходить из Grafana Logs → Langfuse Trace.
+Корреляция: `trace_id` в логах совпадает с trace_id в Langfuse, что позволяет переходить из Grafana Logs → Langfuse Trace.

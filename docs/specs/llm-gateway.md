@@ -1,159 +1,165 @@
-# Спецификация: LLM API Gateway
+# Спецификация: LLM API Gateway (LiteLLM Proxy)
 
 ## Назначение
 
-Единая точка входа для всех LLM-запросов. Прокси между агентами и LLM-провайдерами с балансировкой, streaming, метриками, guardrails и авторизацией.
+Единая точка входа для всех LLM-запросов. Используем [LiteLLM Proxy](https://github.com/BerriAI/litellm) — production-ready OpenAI-compatible прокси с routing, failover, метриками и cost tracking из коробки.
+
+**Почему LiteLLM, а не custom Gateway:**
+- Покрывает 90%+ требований: routing, circuit breaker, streaming, auth, Prometheus, Langfuse, cost tracking
+- MIT-лицензия, self-hosted Docker, активно поддерживается
+- OpenAI-compatible API — Codex подключается как к обычному OpenAI endpoint
+- Кастомные guardrails через `CustomGuardrail` base class — не нужно форкать
 
 ## API
 
-### Chat Completions (основной endpoint)
+Стандартный OpenAI-compatible API, предоставляемый LiteLLM:
 
 ```
-POST /v1/chat/completions
-Authorization: Bearer <agent-token>
-Content-Type: application/json
-
-{
-  "model": "qwen-2.5-coder-7b",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-  ],
-  "stream": true,
-  "temperature": 0.7,
-  "max_tokens": 4096
-}
+POST /v1/chat/completions     — Chat Completions (stream + non-stream)
+POST /v1/embeddings           — Embeddings
+GET  /v1/models               — Список доступных моделей
+GET  /health                  — Health check
+POST /model/new               — Добавить deployment (dynamic)
+POST /model/update            — Обновить deployment
+POST /model/delete            — Удалить deployment
+GET  /model/info              — Информация о моделях
+POST /key/generate            — Создать virtual key
+GET  /key/info                — Информация о ключе
+POST /key/delete              — Удалить ключ
 ```
 
-**Ответ (stream=true):** SSE stream, формат OpenAI:
-```
-data: {"id":"chatcmpl-...","choices":[{"delta":{"content":"Hello"},"index":0}]}
+## Конфигурация (`config.yaml`)
 
-data: {"id":"chatcmpl-...","choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":50,"completion_tokens":100}}
+```yaml
+model_list:
+  # --- vLLM (локальный) ---
+  - model_name: "qwen-2.5-coder-7b"
+    litellm_params:
+      model: "openai/qwen-2.5-coder-7b"
+      api_base: "http://vllm:8000/v1"
+      api_key: "os.environ/VLLM_API_KEY"
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    model_info:
+      id: "vllm-qwen-7b"
 
-data: [DONE]
-```
+  # --- OpenRouter (облачный, fallback) ---
+  - model_name: "qwen-2.5-coder-7b"
+    litellm_params:
+      model: "openrouter/qwen/qwen-2.5-coder-7b-instruct"
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      # Цены OpenRouter (пример)
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.00000015
+    model_info:
+      id: "openrouter-qwen-7b"
 
-**Ответ (stream=false):** Стандартный OpenAI Chat Completions response.
+router_settings:
+  routing_strategy: "latency-based-routing"
+  # Circuit breaker / Cooldown
+  allowed_fails: 3
+  cooldown_time: 30              # секунд в cooldown после failure threshold
+  retry_after: 15                # секунд между retries
+  num_retries: 2                 # retries перед failover
+  timeout: 60                    # таймаут запроса к провайдеру
+  # Health checks
+  enable_pre_call_checks: true   # проверка перед routing
 
-### Provider Management
+litellm_settings:
+  drop_params: true              # игнорировать неподдерживаемые параметры
+  set_verbose: false
+  # Callbacks
+  success_callback: ["prometheus", "langfuse"]
+  failure_callback: ["prometheus", "langfuse"]
 
-```
-POST   /providers          — регистрация провайдера
-GET    /providers          — список провайдеров
-GET    /providers/{id}     — детали провайдера
-PUT    /providers/{id}     — обновление
-DELETE /providers/{id}     — удаление
-```
-
-**Модель провайдера:**
-```json
-{
-  "id": "uuid",
-  "name": "vllm-local",
-  "base_url": "http://vllm:8000/v1",
-  "models": ["qwen-2.5-coder-7b", "qwen-2.5-coder-3b"],
-  "api_key_encrypted": "...",
-  "price_per_input_token": 0.0,
-  "price_per_output_token": 0.0,
-  "rate_limit_rpm": 100,
-  "priority": 1,
-  "weight": 10,
-  "is_active": true
-}
-```
-
-### Health
-
-```
-GET /health  →  {"status": "ok", "providers": {"vllm-local": "healthy", "openrouter": "degraded"}}
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/LITELLM_DATABASE_URL"
+  store_model_in_db: true        # dynamic model CRUD
+  # Guardrails
+  guardrails:
+    - guardrail_name: "sre-prompt-injection"
+      litellm_params:
+        guardrail: "custom_guardrail.PromptInjectionGuardrail"
+        mode: "pre_call"
+    - guardrail_name: "sre-secret-leak"
+      litellm_params:
+        guardrail: "custom_guardrail.SecretLeakGuardrail"
+        mode: "pre_call"
 ```
 
 ## Балансировка
 
-### Стратегии (применяются последовательно)
+### Стратегии (встроенные в LiteLLM Router)
 
-1. **Model Match** — фильтрация провайдеров, поддерживающих запрошенную модель
-2. **Health Filter** — исключение провайдеров в состоянии OPEN (circuit breaker)
-3. **Strategy Selection** (configurable per model):
-   - `round_robin` — циклический перебор
-   - `weighted` — по статическим весам (`weight`)
-   - `latency_based` — приоритет провайдеру с минимальным EMA latency
-4. **Fallback** — если выбранный провайдер fails → retry со следующим
+| Стратегия | Описание | Наш выбор |
+|---|---|---|
+| `latency-based-routing` | Приоритет deployment-у с минимальной latency | **Да (primary)** |
+| `simple-shuffle` | Случайный выбор с учётом weight | Для A/B тестов |
+| `usage-based-routing-v2` | По utilization (RPM/TPM) | Альтернатива |
+| `least-busy` | Наименьшее количество активных запросов | Альтернатива |
+| `cost-based-routing` | Приоритет дешёвому | Для экономии |
 
-### Circuit Breaker
+### Circuit Breaker / Cooldown
 
-| Параметр | Значение по умолчанию |
-|---|---|
-| `failure_threshold` | 3 consecutive failures |
-| `recovery_timeout` | 30s (первый probe) |
-| `backoff_multiplier` | 2x (30s → 60s → 120s) |
-| `max_recovery_timeout` | 300s |
-| `probe_request` | GET /health к провайдеру |
+LiteLLM реализует cooldown-механизм:
 
-**Состояния:**
-- `CLOSED` — провайдер здоров, трафик идёт
-- `OPEN` — провайдер исключён, probe по таймеру
-- `HALF_OPEN` — probe отправлен, ждём результат; если OK → CLOSED, если FAIL → OPEN
+1. Deployment получает `allowed_fails` (default: 3) consecutive failures
+2. Deployment переходит в **cooldown** на `cooldown_time` секунд
+3. Трафик маршрутизируется на оставшиеся deployments
+4. После cooldown — deployment возвращается в пул
+5. Background health checks (`enable_pre_call_checks`) проверяют доступность
 
-### EMA Latency
+**Параметры:**
 
-```python
-ema = alpha * current_latency + (1 - alpha) * prev_ema
-# alpha = 0.3 (реакция на последние запросы)
-```
+| Параметр | Default | Наше значение |
+|---|---|---|
+| `allowed_fails` | 3 | 3 |
+| `cooldown_time` | 30s | 30s |
+| `num_retries` | 2 | 2 |
+| `timeout` | 600s | 60s |
 
 ## Streaming
 
-- Gateway использует `httpx.AsyncClient` с `stream=True`
-- SSE чанки проксируются по мере получения (не буферизуются)
-- Метрики TTFT/TPOT собираются в реальном времени по таймингу чанков
-- При разрыве соединения с провайдером → ошибка прокидывается клиенту (retry на уровне клиента)
+- LiteLLM проксирует SSE чанки по мере получения (FastAPI `StreamingResponse`)
+- `stream_timeout` configurable per deployment
+- При разрыве соединения — ошибка прокидывается клиенту
 
 ## Метрики
 
-Полный список метрик с типами, labels и bucket-конфигурациями: [observability.md](observability.md#opentelemetry-sdk)
+LiteLLM экспортирует Prometheus метрики через `success_callback: ["prometheus"]`:
+
+| Метрика | Тип |
+|---|---|
+| `litellm_proxy_total_requests_metric` | Counter |
+| `litellm_request_total_latency_metric` | Histogram |
+| `litellm_llm_api_time_to_first_token_metric` | Histogram |
+| `litellm_input_tokens_metric` | Counter |
+| `litellm_output_tokens_metric` | Counter |
+| `litellm_spend_metric` | Counter |
+| `litellm_proxy_failed_requests_metric` | Counter |
+| `litellm_deployment_failure_responses` | Counter |
+| `litellm_remaining_team_budget_metric` | Gauge |
+
+**TPOT gap:** TPOT доступен только через OpenTelemetry (`gen_ai.client.response.time_per_output_token`). При необходимости — решаем через OTel Collector → Prometheus или кастомный callback.
+
+Полная конфигурация Prometheus + Grafana дашборды: [observability.md](observability.md)
 
 ## Ошибки
 
-| Код | Когда | Тело |
-|---|---|---|
-| 400 | Невалидный запрос | `{"error": {"message": "...", "type": "invalid_request_error"}}` |
-| 401 | Невалидный токен | `{"error": {"message": "...", "type": "authentication_error"}}` |
-| 422 | Guardrails block | `{"error": {"message": "...", "type": "guardrails_error", "rule": "prompt_injection"}}` |
-| 429 | Rate limit | `{"error": {"message": "...", "type": "rate_limit_error"}}` Retry-After header |
-| 503 | Все провайдеры down | `{"error": {"message": "...", "type": "service_unavailable"}}` |
-| 502 | Провайдер вернул ошибку (после всех retry) | `{"error": {"message": "...", "type": "upstream_error"}}` |
+LiteLLM возвращает ошибки в формате OpenAI:
 
-## Logging
-
-**Библиотека:** `structlog` — structured JSON logging с автоматическим добавлением `trace_id` / `span_id` из OpenTelemetry контекста.
-
-```python
-import structlog
-
-logger = structlog.get_logger()
-
-# Каждый лог — JSON с trace context
-logger.info("llm_request_completed",
-    provider="vllm-local",
-    model="qwen-2.5-coder-7b",
-    latency_ms=1234,
-    tokens_in=500,
-    tokens_out=200,
-    status=200,
-)
-```
-
-## Метрики: экспорт в Prometheus
-
-**Метод:** `opentelemetry-exporter-prometheus` — единый OTel SDK для traces и metrics. Prometheus scrape endpoint `/metrics` создаётся автоматически. Не нужно дублировать инструментирование в `prometheus-client`.
+| Код | Когда |
+|---|---|
+| 400 | Невалидный запрос |
+| 401 | Невалидный ключ / master key |
+| 422 | Guardrail block |
+| 429 | Rate limit / budget exceeded |
+| 503 | Все deployments в cooldown |
 
 ## Зависимости
 
-- **PostgreSQL** — провайдеры, API keys (через SQLAlchemy Async)
-- **Prometheus** — scrape /metrics (через opentelemetry-exporter-prometheus)
-- **Langfuse** — traces (Gateway-level: каждый LLM-запрос)
+- **PostgreSQL** — virtual keys, spend tracking, model store (LiteLLM Prisma DB)
+- **Prometheus** — scrape /metrics
+- **Langfuse** — traces (per LLM-request, native integration)
 - **LLM Providers** — upstream (vLLM, OpenRouter)
-- **structlog** — structured JSON logging
-- **Alembic** — миграции БД

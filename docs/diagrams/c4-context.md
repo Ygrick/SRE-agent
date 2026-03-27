@@ -9,7 +9,7 @@ flowchart TB
 
     subgraph platform ["AI-SRE Platform"]
         direction TB
-        ai_sre["<b>AI-SRE Platform</b><br/>LLM Gateway · Agent Registry<br/>SRE-агент · Observability"]
+        ai_sre["<b>AI-SRE Platform</b><br/>LiteLLM Proxy · Agent Registry<br/>SRE-агент · Observability"]
     end
 
     vllm[/"<b>vLLM</b><br/>Локальный LLM-сервер"/]
@@ -44,6 +44,6 @@ flowchart TB
 
 | Граница | Внутри | Снаружи |
 |---|---|---|
-| **AI-SRE Platform** | Gateway, Registry, SRE-агент, Observability, Auth, Guardrails, PostgreSQL, Prometheus, Grafana, Langfuse | — |
+| **AI-SRE Platform** | LiteLLM Proxy, Registry, SRE-агент, Observability, Guardrails, PostgreSQL, Prometheus, Grafana, Langfuse | — |
 | **Внешние сервисы** | — | vLLM (GPU-сервер), OpenRouter (облако), Telegram (облако) |
 | **Полигон** | App, PostgreSQL, Redis, Zabbix Agent | Мониторится Zabbix, диагностируется SRE-агентом |
