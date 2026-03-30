@@ -1,0 +1,82 @@
+# LiteLLM Proxy Configuration
+# Подробности: docs/specs/llm-gateway.md
+# Как добавить нового провайдера: docs/guides/add-provider.md
+
+model_list:
+  # =============================================
+  # OpenRouter (free-tier модели)
+  # =============================================
+  - model_name: "gpt-oss-120b"
+    litellm_params:
+      model: "openai/openai/gpt-oss-120b:free"
+      api_base: "https://openrouter.ai/api/v1"
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    model_info:
+      id: "openrouter-gpt-oss-120b"
+
+  - model_name: "minimax-m2.5"
+    litellm_params:
+      model: "openai/minimax/minimax-m2.5:free"
+      api_base: "https://openrouter.ai/api/v1"
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    model_info:
+      id: "openrouter-minimax-m2.5"
+
+  - model_name: "qwen3-coder"
+    litellm_params:
+      model: "openai/qwen/qwen3-coder:free"
+      api_base: "https://openrouter.ai/api/v1"
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    model_info:
+      id: "openrouter-qwen3-coder"
+
+  # =============================================
+  # RMR Router (OpenAI-compatible, gpt-oss-120b)
+  # Второй deployment той же модели для балансировки
+  # =============================================
+  - model_name: "gpt-oss-120b"
+    litellm_params:
+      model: "openai/gpt-oss-120b"
+      api_base: "os.environ/RMR_BASE_URL"
+      api_key: "os.environ/RMR_API_KEY"
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    model_info:
+      id: "rmr-gpt-oss-120b"
+
+router_settings:
+  routing_strategy: "latency-based-routing"
+  allowed_fails: 3
+  cooldown_time: 30
+  num_retries: 2
+  timeout: 60
+  enable_pre_call_checks: true
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  success_callback: ["prometheus", "langfuse"]
+  failure_callback: ["prometheus", "langfuse"]
+
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/LITELLM_DATABASE_URL"
+  store_model_in_db: true
+
+guardrails:
+  - guardrail_name: "sre-prompt-injection"
+    litellm_params:
+      guardrail: "custom_guardrail.PromptInjectionGuardrail"
+      mode: "pre_call"
+      default_on: true
+  - guardrail_name: "sre-secret-leak"
+    litellm_params:
+      guardrail: "custom_guardrail.SecretLeakGuardrail"
+      mode: "pre_call"
+      default_on: true
