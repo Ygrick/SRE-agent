@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "litellm"
+    static_configs:
+      - targets: ["litellm:4000"]
+    metrics_path: /metrics/
+    authorization:
+      credentials: sk-master-changeme
+
+  - job_name: "sre-agent"
+    static_configs:
+      - targets: ["sre-agent:8002"]
+    metrics_path: /metrics
+
+  - job_name: "agent-registry"
+    static_configs:
+      - targets: ["agent-registry:8001"]
+    metrics_path: /metrics

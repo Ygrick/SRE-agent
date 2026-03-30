@@ -1,0 +1,306 @@
+services:
+  # === LLM Gateway (LiteLLM) ===
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    ports:
+      - "4000:4000"
+    env_file: .env
+    volumes:
+      - ./gateway/litellm_config.yaml:/app/config.yaml:ro
+      - ./gateway/custom_guardrail.py:/app/custom_guardrail.py:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      litellm-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:4000/health', headers={'Authorization':'Bearer ${LITELLM_MASTER_KEY:-sk-master-changeme}'}))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  litellm-postgres:
+    image: postgres:16-alpine
+    volumes:
+      - litellm_pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_sre} -d litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # === Наши сервисы ===
+  agent-registry:
+    build: ./registry
+    ports:
+      - "8001:8001"
+    env_file: .env
+    environment:
+      REGISTRY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_sre}:${POSTGRES_PASSWORD}@postgres:5432/ai_sre
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  sse-fix-proxy:
+    build: ./agent/sse_fix_proxy
+    ports:
+      - "8100:8100"
+    environment:
+      UPSTREAM_URL: https://rmrrouter.redmadrobot.com
+      UPSTREAM_API_KEY: ${RMR_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  sre-agent:
+    build: ./agent
+    ports:
+      - "8002:8002"
+    env_file: .env
+    volumes:
+      - playground_ssh_keys:/run/secrets/ssh:ro
+    depends_on:
+      litellm:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      playground-app:
+        condition: service_healthy
+      sse-fix-proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # === Хранение ===
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ai_sre
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_sre} -d ai_sre"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # === Observability ===
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ai_sre}:${POSTGRES_PASSWORD}@langfuse-postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-langfuse-secret}
+      NEXTAUTH_URL: http://localhost:3001
+      SALT: ${LANGFUSE_SALT:-changeme-langfuse-salt}
+      LANGFUSE_INIT_ORG_ID: sre-platform
+      LANGFUSE_INIT_ORG_NAME: "AI-SRE Platform"
+      LANGFUSE_INIT_PROJECT_ID: sre-agent
+      LANGFUSE_INIT_PROJECT_NAME: "SRE Agent"
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local}
+      LANGFUSE_INIT_USER_EMAIL: admin@local.dev
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_PASSWORD:-admin1234}
+      LANGFUSE_INIT_USER_NAME: Admin
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  langfuse-postgres:
+    image: postgres:16-alpine
+    volumes:
+      - langfuse_pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_sre} -d langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # === Мониторинг полигона ===
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:7.0-alpine-latest
+    ports:
+      - "10051:10051"
+    environment:
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      zabbix-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:7.0-alpine-latest
+    ports:
+      - "8080:8080"
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      - zabbix-server
+    restart: unless-stopped
+
+  zabbix-postgres:
+    image: postgres:16-alpine
+    volumes:
+      - zabbix_pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_sre} -d zabbix"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:7.0-alpine-latest
+    environment:
+      ZBX_HOSTNAME: playground
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_ACTIVE: zabbix-server
+    depends_on:
+      - zabbix-server
+    pid: "host"
+    restart: unless-stopped
+
+  # === Полигон ===
+  playground-app:
+    build: ./playground
+    ports:
+      - "8090:8090"
+      - "2222:22"
+    volumes:
+      - playground_ssh_keys:/home/sre-agent/.ssh
+    depends_on:
+      playground-postgres:
+        condition: service_healthy
+      playground-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  playground-postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    volumes:
+      - playground_pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: playground
+      POSTGRES_USER: ${POSTGRES_USER:-ai_sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_sre} -d playground"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  playground-redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  litellm_pg_data:
+  qdrant_data:
+  prometheus_data:
+  grafana_data:
+  langfuse_pg_data:
+  zabbix_pg_data:
+  playground_pg_data:
+  playground_ssh_keys:

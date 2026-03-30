@@ -2,7 +2,18 @@
 __pycache__/
 *.py[codz]
 *$py.class
+
+# Claude Code
 .claude/
+
+# Docker volumes (local data)
+docker-data/
+
+# macOS
+.DS_Store
+
+# External/reference projects
+codex-gptoss-sre-solution-main/
 
 # C extensions
 *.so
