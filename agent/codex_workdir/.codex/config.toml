@@ -1,0 +1,15 @@
+# Codex CLI configuration for SRE Agent
+# Provider: RMR Router via SSE Fix Proxy (patches missing SSE events)
+
+model = "gpt-oss-120b"
+model_provider = "rmrouter"
+
+[approval]
+mode = "full-auto"
+
+[model_providers.rmrouter]
+name = "RMR Router (via SSE proxy)"
+base_url = "http://sse-fix-proxy:8100/v1"
+env_key = "RMR_API_KEY"
+wire_api = "responses"
+supports_websockets = false
