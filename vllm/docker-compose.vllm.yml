@@ -4,13 +4,20 @@
 #   docker compose -f vllm/docker-compose.vllm.yml up -d
 #
 # Требования:
-#   - NVIDIA GPU с ≥24GB VRAM (RTX 3090/4090, A100, L40S)
+#   - NVIDIA GPU с ≥16GB VRAM (RTX 4090, A5000, H100)
 #   - nvidia-container-toolkit установлен
 #   - Docker с поддержкой --gpus
+#
+# Модель: openai/gpt-oss-20b
+#   - 21B params total, 3.6B active (MoE)
+#   - Уже квантизирована MXFP4 — не нужно указывать --quantization
+#   - ~16GB VRAM на одном GPU
 
 services:
   vllm:
-    image: vllm/vllm-openai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -24,22 +31,15 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    command: >
-      --model openai/gpt-oss-20b
-      --dtype auto
-      --max-model-len 32768
-      --gpu-memory-utilization 0.90
-      --host 0.0.0.0
-      --port 8000
-      --trust-remote-code
-      --enable-auto-tool-choice
+    # Без дополнительных флагов: MXFP4 встроен, single GPU, dtype auto
+    command: ["openai/gpt-oss-20b", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 180s  # Загрузка модели может занять 2-3 минуты
 
 volumes:
   vllm_cache:
