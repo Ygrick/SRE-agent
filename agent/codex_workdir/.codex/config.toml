@@ -1,15 +1,24 @@
 # Codex CLI configuration for SRE Agent
-# Provider: OpenRouter (full Responses API support)
+# Provider: LiteLLM Gateway (routing, failover, metrics, guardrails)
 
-model = "stepfun/step-3.5-flash:free"
-model_provider = "openrouter"
+model = "step-3.5-flash"
+model_provider = "litellm"
 
 [approval]
 mode = "full-auto"
 
-[model_providers.openrouter]
-name = "OpenRouter"
-base_url = "https://openrouter.ai/api/v1"
-env_key = "OPENROUTER_API_KEY"
+[model_providers.litellm]
+name = "LiteLLM Gateway"
+base_url = "http://litellm:4000/v1"
+env_key = "LITELLM_API_KEY"
 wire_api = "responses"
 supports_websockets = false
+
+# MCP Servers — tools available to Codex during investigations
+# Docs: docs/guides/add-mcp-server.md
+[mcp_servers.qdrant-search]
+command = "python3"
+args = ["-m", "agent.mcp_servers.qdrant_search_server"]
+env = { QDRANT_URL = "http://qdrant:6333", QDRANT_COLLECTION = "runbooks", PYTHONPATH = "/app" }
+startup_timeout_sec = 30
+tool_timeout_sec = 15

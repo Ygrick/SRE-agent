@@ -20,6 +20,22 @@ model_list:
       priority: 0       # highest priority — 2-5s latency, stable
 
   # =============================================
+  # MiniMax M2.7 (fallback — large, expensive, high quality)
+  # =============================================
+  - model_name: "minimax-m2.7"
+    litellm_params:
+      model: "openai/minimax/minimax-m2.7"
+      api_base: "https://openrouter.ai/api/v1"
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      input_cost_per_token: 0.0000003
+      output_cost_per_token: 0.0000012
+      rpm: 30
+      tpm: 120000
+    model_info:
+      id: "openrouter-minimax-m2.7"
+      priority: 1       # fallback — $0.30/$1.20 per M tokens
+
+  # =============================================
   # Optional: vLLM gpt-oss-20b on GPU (uncomment when available)
   # См. vllm/Dockerfile и docs/guides/deploy-vllm.md
   # =============================================
@@ -41,6 +57,9 @@ router_settings:
   num_retries: 2                              # 2 retry перед failover
   timeout: 120                                # таймаут на запрос
   enable_pre_call_checks: true                # health-check перед routing
+  fallbacks:                                  # failover между моделями
+    - step-3.5-flash: ["minimax-m2.7"]
+    - minimax-m2.7: ["step-3.5-flash"]
 
 litellm_settings:
   drop_params: true

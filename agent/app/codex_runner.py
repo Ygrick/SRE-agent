@@ -156,12 +156,15 @@ def _extract_report(stdout: str, stderr: str) -> str | None:
 def _build_env() -> dict[str, str]:
     """Build env vars for Codex subprocess.
 
+    Codex reads LITELLM_API_KEY from env (configured in config.toml env_key).
+    Routes through LiteLLM Gateway for failover, metrics, and guardrails.
+
     Returns:
-        Environment dict with OPENROUTER_API_KEY.
+        Environment dict with LITELLM_API_KEY.
     """
     env = os.environ.copy()
-    if "OPENROUTER_API_KEY" not in env:
-        env["OPENROUTER_API_KEY"] = settings.gateway_api_key
+    env["LITELLM_API_KEY"] = settings.gateway_api_key
+    # Remove vars that could confuse Codex
     env.pop("OPENAI_BASE_URL", None)
     env.pop("OPENAI_API_KEY", None)
     return env

@@ -40,7 +40,7 @@ class AgentSettings(BaseSettings):
     qdrant_collection: str = Field(default="runbooks")
     telegram_bot_token: str = Field(default="", description="Telegram Bot API token")
     telegram_chat_id: str = Field(default="", description="Target chat for reports")
-    codex_model: str = Field(default="stepfun/step-3.5-flash:free")
+    codex_model: str = Field(default="step-3.5-flash", description="LiteLLM model name for Codex CLI")
     max_shell_commands: int = Field(default=15)
     investigation_timeout_seconds: int = Field(default=300)
     ssh_user: str = Field(default="sre-agent")
