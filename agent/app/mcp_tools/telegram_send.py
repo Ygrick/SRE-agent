@@ -34,23 +34,45 @@ async def send_report(message: str) -> str:
         "parse_mode": "Markdown",
     }
 
-    last_error = ""
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    logger.info("telegram_sent", chat_id=settings.telegram_chat_id)
-                    return "Report sent to Telegram"
-                last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                logger.warning(
-                    "telegram_send_failed",
-                    attempt=attempt,
-                    status=resp.status_code,
-                )
-            except httpx.HTTPError as exc:
-                last_error = str(exc)
-                logger.warning("telegram_send_error", attempt=attempt, error=last_error)
+        # Try with Markdown first
+        resp = await _send(client, url, payload)
+        if resp and resp.status_code == 200:
+            logger.info("telegram_sent", chat_id=settings.telegram_chat_id)
+            return "Report sent to Telegram"
 
-    logger.error("telegram_send_exhausted", retries=MAX_RETRIES, last_error=last_error)
-    return f"Failed to send to Telegram after {MAX_RETRIES} retries: {last_error}"
+        # Fallback: send as plain text (LLM output may break Markdown parsing)
+        payload.pop("parse_mode", None)
+        resp = await _send(client, url, payload)
+        if resp and resp.status_code == 200:
+            logger.info("telegram_sent", chat_id=settings.telegram_chat_id, mode="plain")
+            return "Report sent to Telegram (plain text)"
+
+        last_error = f"HTTP {resp.status_code}: {resp.text[:200]}" if resp else "connection error"
+        logger.error("telegram_send_exhausted", last_error=last_error)
+        return f"Failed to send to Telegram: {last_error}"
+
+
+async def _send(client: httpx.AsyncClient, url: str, payload: dict) -> httpx.Response | None:
+    """Send a single Telegram API request with retries.
+
+    Args:
+        client: HTTP client.
+        url: Telegram API URL.
+        payload: Request payload.
+
+    Returns:
+        Response or None on connection error.
+    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp
+            # 400 = parse error, don't retry — caller will try plain text
+            if resp.status_code == 400:
+                return resp
+            logger.warning("telegram_send_failed", attempt=attempt, status=resp.status_code)
+        except httpx.HTTPError as exc:
+            logger.warning("telegram_send_error", attempt=attempt, error=str(exc))
+    return None
