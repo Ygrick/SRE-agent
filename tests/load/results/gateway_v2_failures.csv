@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences
+POST,/v1/chat/completions [non-stream],HTTPError('429 Client Error: Too Many Requests for url: /v1/chat/completions [non-stream]'),11
+POST,/v1/chat/completions [stream],CatchResponseError('Status 429'),5
