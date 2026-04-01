@@ -149,6 +149,7 @@ async def _investigate(alert: ZabbixAlert, investigation_id: str) -> None:
         investigation_id=investigation_id,
         host=alert.host,
         severity=alert.severity,
+        trigger=alert.trigger,
     )
 
     try:
