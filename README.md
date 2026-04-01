@@ -118,7 +118,18 @@ uv run python agent/scripts/index_runbooks.py --runbooks-dir runbooks
 # → "Indexed 20 chunks into Qdrant"
 ```
 
-### Шаг 5: Проверка работы
+### Шаг 5: Настройка мониторинга Zabbix
+
+```bash
+# Автоматическая настройка: host, triggers, webhook → SRE Agent
+bash scripts/setup_zabbix.sh
+```
+
+Скрипт создаст в Zabbix: host "playground", шаблон Linux, webhook media type и trigger action. После этого Zabbix будет автоматически отправлять алерты в SRE Agent.
+
+> **Добавить другие хосты:** Отредактируйте `agent/ssh_config` — [инструкция](docs/guides/add-ssh-host.md)
+
+### Шаг 6: Проверка работы
 
 ```bash
 # E2E demo (проверяет все сервисы, отправляет алерт, ждёт результат)
