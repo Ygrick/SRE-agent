@@ -54,21 +54,6 @@ services:
       retries: 3
       start_period: 15s
 
-  sse-fix-proxy:
-    build: ./agent/sse_fix_proxy
-    ports:
-      - "8100:8100"
-    environment:
-      UPSTREAM_URL: https://rmrrouter.redmadrobot.com
-      UPSTREAM_API_KEY: ${RMR_API_KEY}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
   sre-agent:
     build: ./agent
     ports:
@@ -76,6 +61,7 @@ services:
     env_file: .env
     volumes:
       - playground_ssh_keys:/run/secrets/ssh:ro
+      - ./agent/ssh_config:/root/.ssh/config:ro
     depends_on:
       litellm:
         condition: service_healthy
@@ -83,7 +69,6 @@ services:
         condition: service_healthy
       playground-app:
         condition: service_healthy
-      # sse-fix-proxy: needed only for RMR provider (not needed for OpenRouter)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]

@@ -1,0 +1,28 @@
+# SSH-конфигурация для SRE Agent
+# Добавьте хосты, которые агент должен диагностировать.
+# Имя хоста (Host) должно совпадать с полем "host" в Zabbix-алертах.
+#
+# Инструкция: docs/guides/add-ssh-host.md
+
+# --- Playground (тестовый полигон, включён по умолчанию) ---
+Host playground
+    HostName playground-app
+    Port 22
+
+# --- Примеры: раскомментируйте и настройте ---
+# Host production-web
+#     HostName 10.0.1.10
+#     Port 22
+#
+# Host staging-db
+#     HostName staging-db.internal
+#     Port 2222
+
+# --- Общие настройки (применяются ко всем хостам) ---
+Host *
+    User sre-agent
+    IdentityFile /run/secrets/ssh/id_ed25519
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ConnectTimeout 10

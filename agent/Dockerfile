@@ -44,16 +44,8 @@ RUN cd /opt/codex_workdir \
 RUN mkdir -p /root/.codex \
     && cp /opt/codex_workdir/.codex/config.toml /root/.codex/config.toml
 
-# SSH config for playground access
-RUN mkdir -p /root/.ssh && printf "\
-Host playground\n\
-    HostName playground-app\n\
-    User sre-agent\n\
-    IdentityFile /run/secrets/ssh/id_ed25519\n\
-    StrictHostKeyChecking no\n\
-    UserKnownHostsFile /dev/null\n\
-    LogLevel ERROR\n\
-" > /root/.ssh/config && chmod 600 /root/.ssh/config
+# SSH directory (config is mounted via docker-compose from agent/ssh_config)
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
 
 EXPOSE 8002
 
