@@ -36,7 +36,7 @@ LiteLLM экспортирует метрики через `success_callback: ["
 
 Экспорт метрик агента: `opentelemetry-exporter-prometheus` → endpoint `/metrics` на порту 8002.
 
-**TPOT gap:** TPOT (time per output token) доступен только через OpenTelemetry, не через Prometheus callback LiteLLM. Решение: добавить `CustomLogger` callback (~30 строк), который считает TPOT из streaming chunks и экспортирует в Prometheus.
+**TPOT:** LiteLLM экспортирует `litellm_deployment_latency_per_output_token` histogram — TPOT доступен через Prometheus. Панель добавлена в Grafana dashboard "LLM Gateway Overview".
 
 ### Prometheus
 

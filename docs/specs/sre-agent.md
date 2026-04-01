@@ -20,17 +20,25 @@
 
 **`~/.codex/config.toml`:**
 ```toml
-[provider]
-name = "ai-sre-gateway"
-base_url = "https://openrouter.ai/api/v1"
-env_key = "OPENROUTER_API_KEY"
-wire_api = "responses"
-
-model = "stepfun/step-3.5-flash:free"
+model = "step-3.5-flash"
+model_provider = "litellm"
 
 [approval]
 mode = "full-auto"
+
+[model_providers.litellm]
+name = "LiteLLM Gateway"
+base_url = "http://litellm:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+supports_websockets = false
 ```
+
+Codex работает через LiteLLM Gateway (`/v1/responses`), что обеспечивает:
+- Routing и failover между моделями (step-3.5-flash → minimax-m2.7)
+- Prometheus метрики и Langfuse трейсы для всех LLM-запросов
+- Guardrails (prompt injection, secret leak detection)
+- Cost tracking
 
 **`AGENTS.md` (в рабочей директории):**
 ```markdown
@@ -95,7 +103,7 @@ Content-Type: application/json
    ```
 4. Запуск Codex:
    ```bash
-   codex exec --dangerously-bypass-approvals-and-sandbox --model stepfun/step-3.5-flash:free "{prompt}"
+   codex exec --dangerously-bypass-approvals-and-sandbox --model step-3.5-flash "{prompt}"
    ```
    Или через MCP server (для более сложных сценариев с сессиями).
 5. Логирование trace в Langfuse

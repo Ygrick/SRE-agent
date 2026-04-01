@@ -134,7 +134,7 @@ LiteLLM экспортирует Prometheus метрики через `success_c
 | `litellm_deployment_failure_responses` | Counter |
 | `litellm_remaining_team_budget_metric` | Gauge |
 
-**TPOT gap:** TPOT доступен только через OpenTelemetry (`gen_ai.client.response.time_per_output_token`). При необходимости — решаем через OTel Collector → Prometheus или кастомный callback.
+**TPOT:** LiteLLM экспортирует `litellm_deployment_latency_per_output_token` — TPOT доступен через Prometheus и Grafana.
 
 Полная конфигурация Prometheus + Grafana дашборды: [observability.md](observability.md)
 

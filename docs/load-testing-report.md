@@ -11,7 +11,7 @@
 | Host | macOS Darwin 25.3.0, Apple Silicon |
 | Docker | Docker Compose v2, 17 контейнеров |
 | LLM Gateway | LiteLLM Proxy, `latency-based-routing` |
-| Модель | `stepfun/step-3.5-flash:free` (OpenRouter) |
+| Модель | `step-3.5-flash` через LiteLLM Gateway → OpenRouter |
 | Rate limits провайдера | ~30 RPM, 120K TPM (free tier) |
 | SRE Agent | FastAPI, Codex CLI, max 5 concurrent investigations |
 
