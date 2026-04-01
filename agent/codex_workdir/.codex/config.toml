@@ -1,15 +1,15 @@
 # Codex CLI configuration for SRE Agent
-# Provider: RMR Router via SSE Fix Proxy (patches missing SSE events)
+# Provider: OpenRouter (full Responses API support, no SSE proxy needed)
 
-model = "gpt-oss-120b"
-model_provider = "rmrouter"
+model = "qwen/qwen3.6-plus-preview:free"
+model_provider = "openrouter"
 
 [approval]
 mode = "full-auto"
 
-[model_providers.rmrouter]
-name = "RMR Router (via SSE proxy)"
-base_url = "http://sse-fix-proxy:8100/v1"
-env_key = "RMR_API_KEY"
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
 wire_api = "responses"
 supports_websockets = false

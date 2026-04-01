@@ -83,8 +83,7 @@ services:
         condition: service_healthy
       playground-app:
         condition: service_healthy
-      sse-fix-proxy:
-        condition: service_healthy
+      # sse-fix-proxy: needed only for RMR provider (not needed for OpenRouter)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
