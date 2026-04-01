@@ -21,7 +21,7 @@ class LLMUser(HttpUser):
     @task
     def chat_completion(self):
         self.client.post("/v1/chat/completions", json={
-            "model": "qwen-2.5-coder-7b",
+            "model": "step-3.5-flash",
             "messages": [{"role": "user", "content": "Explain CPU load average"}],
             "max_tokens": 100,
             "stream": False

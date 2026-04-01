@@ -135,7 +135,7 @@ model_list:
 docker compose restart litellm
 ```
 
-### 2. Подключить Codex CLI напрямую (без SSE Fix Proxy)
+### 2. Подключить Codex CLI напрямую
 
 vLLM поддерживает `/v1/responses` — Codex может работать напрямую.
 
@@ -153,7 +153,7 @@ wire_api = "responses"
 supports_websockets = false
 ```
 
-> С vLLM SSE Fix Proxy **не нужен** — vLLM отправляет все SSE events корректно.
+> vLLM отправляет все SSE events корректно — Codex подключается напрямую.
 
 ### 3. Обновить модель агента
 

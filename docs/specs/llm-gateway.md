@@ -32,36 +32,29 @@ POST /key/delete              — Удалить ключ
 
 ```yaml
 model_list:
-  # --- vLLM (локальный) ---
-  - model_name: "qwen-2.5-coder-7b"
+  # OpenRouter (free tier)
+  - model_name: "step-3.5-flash"      # priority 0 (primary, fast 2-5s)
     litellm_params:
-      model: "openai/qwen-2.5-coder-7b"
-      api_base: "http://vllm:8000/v1"
-      api_key: "os.environ/VLLM_API_KEY"
-      input_cost_per_token: 0.0
-      output_cost_per_token: 0.0
-    model_info:
-      id: "vllm-qwen-7b"
-
-  # --- OpenRouter (облачный, fallback) ---
-  - model_name: "qwen-2.5-coder-7b"
-    litellm_params:
-      model: "openrouter/qwen/qwen-2.5-coder-7b-instruct"
+      model: "openai/stepfun/step-3.5-flash:free"
+      api_base: "https://openrouter.ai/api/v1"
       api_key: "os.environ/OPENROUTER_API_KEY"
-      # Цены OpenRouter (пример)
-      input_cost_per_token: 0.00000015
-      output_cost_per_token: 0.00000015
-    model_info:
-      id: "openrouter-qwen-7b"
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000004
+      rpm: 30
+      tpm: 120000
+
+  # Optional: vLLM gpt-oss-20b на GPU (см. vllm/Dockerfile)
+  # - model_name: "gpt-oss-20b"
+  #   litellm_params:
+  #     model: "openai/openai/gpt-oss-20b"
+  #     api_base: "http://<GPU_HOST>:8000/v1"
 
 router_settings:
-  routing_strategy: "latency-based-routing"
-  # Circuit breaker / Cooldown
-  allowed_fails: 3
-  cooldown_time: 30              # секунд в cooldown после failure threshold
-  retry_after: 15                # секунд между retries
-  num_retries: 2                 # retries перед failover
-  timeout: 60                    # таймаут запроса к провайдеру
+  routing_strategy: "latency-based-routing"  # приоритет быстрому
+  allowed_fails: 3                           # 3 ошибки → cooldown
+  cooldown_time: 30                          # секунд в cooldown
+  num_retries: 2                             # retries перед failover
+  timeout: 120                               # таймаут запроса
   # Health checks
   enable_pre_call_checks: true   # проверка перед routing
 

@@ -43,10 +43,8 @@ POSTGRES_PASSWORD=<ваш-пароль>
 # LiteLLM Gateway
 LITELLM_MASTER_KEY=sk-master-<ваш-ключ>
 
-# LLM-провайдеры (минимум один):
-OPENROUTER_API_KEY=sk-or-...          # OpenRouter API key
-RMR_BASE_URL=https://...              # или другой OpenAI-compatible endpoint
-RMR_API_KEY=sk-...
+# LLM-провайдер (OpenRouter)
+OPENROUTER_API_KEY=sk-or-...
 
 # Langfuse (оставьте defaults для локального деплоя)
 LANGFUSE_PUBLIC_KEY=pk-lf-local
@@ -68,23 +66,22 @@ REGISTRY_API_KEY=<ваш-ключ>
 
 ```yaml
 model_list:
-  # Пример: OpenRouter (бесплатные модели)
-  - model_name: "gpt-oss-120b"
+  # OpenRouter (free tier)
+  - model_name: "step-3.5-flash"       # primary
     litellm_params:
-      model: "openai/openai/gpt-oss-120b:free"
+      model: "openai/stepfun/step-3.5-flash:free"
       api_base: "https://openrouter.ai/api/v1"
       api_key: "os.environ/OPENROUTER_API_KEY"
     model_info:
-      id: "openrouter-gpt-oss"
+      id: "openrouter-step-3.5-flash"
+      priority: 0
 
-  # Пример: собственный vLLM на GPU
-  - model_name: "gpt-oss-20b"
-    litellm_params:
-      model: "openai/openai/gpt-oss-20b"
-      api_base: "http://<GPU_SERVER>:8000/v1"
-      api_key: "none"
-    model_info:
-      id: "vllm-local"
+  # Опционально: собственный vLLM gpt-oss-20b на GPU
+  # - model_name: "gpt-oss-20b"
+  #   litellm_params:
+  #     model: "openai/openai/gpt-oss-20b"
+  #     api_base: "http://<GPU_SERVER>:8000/v1"
+  #     api_key: "none"
 ```
 
 Полная инструкция: [Как добавить LLM-провайдера](docs/guides/add-provider.md)
@@ -98,7 +95,7 @@ docker compose up -d
 Первый запуск занимает 3-5 минут (скачивание Docker images). Проверка:
 
 ```bash
-# Статус всех контейнеров (должно быть 18 Up)
+# Статус всех контейнеров (должно быть 17 Up)
 docker compose ps
 
 # Health checks
@@ -169,13 +166,13 @@ curl -X POST http://localhost:8002/webhooks/zabbix \
 | Backend | Python 3.12+, FastAPI, Pydantic v2 |
 | LLM Gateway | LiteLLM Proxy (routing, failover, auth, Prometheus, Langfuse) |
 | Custom Guardrails | Prompt injection + secret leak detection (regex, CustomGuardrail) |
-| Agent Core | Codex CLI + fallback SSH диагностика |
+| Agent Core | Codex CLI (SSH диагностика через AGENTS.md) |
 | Agent Protocol | A2A v1.0 (a2a-sdk) |
 | Knowledge Base | Qdrant + intfloat/multilingual-e5-small |
 | Monitoring (полигон) | Zabbix 7.x |
 | Observability | Prometheus, Grafana, Langfuse |
 | Database | PostgreSQL 16 |
-| Deploy | Docker Compose (18 контейнеров) |
+| Deploy | Docker Compose (17 контейнеров) |
 | Load Testing | Locust |
 | Package Manager | uv |
 
@@ -235,7 +232,7 @@ uv run locust -f tests/load/locustfile.py LLMUser \
 - [Diagrams](docs/diagrams/) — C4 Context, Container, Component, Workflow, Data Flow
 - Спецификации: [LLM Gateway](docs/specs/llm-gateway.md) · [Agent Registry](docs/specs/agent-registry.md) · [SRE Agent](docs/specs/sre-agent.md) · [Observability](docs/specs/observability.md) · [Guardrails](docs/specs/guardrails.md) · [Auth](docs/specs/auth.md) · [Retriever](docs/specs/retriever.md) · [Serving & Config](docs/specs/serving-config.md) · [Load Testing](docs/specs/load-testing.md)
 - [Product Proposal](docs/product-proposal.md) · [Governance & Risks](docs/governance.md)
-- Руководства: [Добавить LLM-провайдера](docs/guides/add-provider.md) · [Сценарии использования](docs/guides/usage.md) · [Развернуть vLLM на GPU](docs/guides/deploy-vllm.md)
+- Руководства: [Добавить LLM-провайдера](docs/guides/add-provider.md) · [Добавить SSH-хост](docs/guides/add-ssh-host.md) · [Сценарии использования](docs/guides/usage.md) · [Развернуть vLLM на GPU](docs/guides/deploy-vllm.md)
 
 ## Что НЕ делает PoC
 

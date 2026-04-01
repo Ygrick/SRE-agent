@@ -23,14 +23,14 @@
 
 **Ограничения**
 
-* **Технические (Hardware & LLM Serving):** Развертывание локально на удаленном сервере с RTX 4090 (24GB VRAM) с использованием vLLM. Это диктует использование квантованных моделей (Qwen 4B/9B) для обеспечения приемлемого p95 latency при генерации токенов (и достаточного размера контекстного окна для чтения логов). Фоллбэк — использование Mistral/OpenRouter API.
+* **Технические (Hardware & LLM Serving):** Основная модель — stepfun/step-3.5-flash через OpenRouter (free tier, 2-5s latency). Опционально — vLLM на GPU (gpt-oss-20b, RTX 4090 24GB). LiteLLM Proxy обеспечивает routing и failover между провайдерами.
 * **Операционные:** Только опенсорс инструменты. Срок реализации PoC — 8 недель (1 Middle NLP engineer).
 
 **Архитектурный набросок и Data Flow**
 
 * **Модули и интеграции:**
   * *Trigger:* Zabbix Webhook Receiver (Python FastAPI)
-  * *Orchestrator/State:* LangGraph (граф состояний агента и история вызовов)
+  * *Orchestrator/State:* Codex CLI (agent-loop с AGENTS.md инструкциями)
   * *Memory/Knowledge:* Qdrant (векторная БД для Runbooks)
   * *Tools:* Python `subprocess` или SSH-клиент для выполнения bash-команд
   * *Tracing:* Langfuse

@@ -22,14 +22,14 @@
 ```toml
 [provider]
 name = "ai-sre-gateway"
-baseURL = "http://llm-gateway:8000/v1"
-envKey = "GATEWAY_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
 
-[model]
-default = "qwen-2.5-coder-7b"
+model = "stepfun/step-3.5-flash:free"
 
 [approval]
-mode = "never"  # full auto для автоматизации
+mode = "full-auto"
 ```
 
 **`AGENTS.md` (в рабочей директории):**
@@ -95,7 +95,7 @@ Content-Type: application/json
    ```
 4. Запуск Codex:
    ```bash
-   codex exec --quiet --model qwen-2.5-coder-7b --approval-mode never "{prompt}"
+   codex exec --dangerously-bypass-approvals-and-sandbox --model stepfun/step-3.5-flash:free "{prompt}"
    ```
    Или через MCP server (для более сложных сценариев с сессиями).
 5. Логирование trace в Langfuse

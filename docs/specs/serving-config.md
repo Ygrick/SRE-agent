@@ -181,13 +181,11 @@ class AgentSettings(BaseSettings):
     qdrant_collection: str = Field(default="runbooks")
     telegram_bot_token: str = Field(description="Telegram Bot API token")
     telegram_chat_id: str = Field(description="Target chat for reports")
-    codex_model: str = Field(default="qwen-2.5-coder-7b")
+    codex_model: str = Field(default="stepfun/step-3.5-flash:free")
     max_shell_commands: int = Field(default=15)
     investigation_timeout_seconds: int = Field(default=300)
-    playground_ssh_host: str = Field(default="playground-app")
-    playground_ssh_port: int = Field(default=22)
-    playground_ssh_user: str = Field(default="sre-agent")
-    playground_ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
+    ssh_user: str = Field(default="sre-agent")
+    ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
 ```
 
 ### Registry Settings (pydantic-settings)
