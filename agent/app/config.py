@@ -21,9 +21,8 @@ class AgentSettings(BaseSettings):
         codex_model: Model name for Codex CLI.
         max_shell_commands: Max shell commands per investigation.
         investigation_timeout_seconds: Max investigation duration.
-        playground_ssh_host: SSH host for playground.
-        playground_ssh_user: SSH user for playground.
-        playground_ssh_key_path: Path to SSH private key.
+        ssh_user: SSH user for remote diagnostics.
+        ssh_key_path: Path to SSH private key.
         langfuse_public_key: Langfuse public key.
         langfuse_secret_key: Langfuse secret key.
         langfuse_host: Langfuse server URL.
@@ -41,13 +40,11 @@ class AgentSettings(BaseSettings):
     qdrant_collection: str = Field(default="runbooks")
     telegram_bot_token: str = Field(default="", description="Telegram Bot API token")
     telegram_chat_id: str = Field(default="", description="Target chat for reports")
-    codex_model: str = Field(default="qwen/qwen3.6-plus-preview:free")
-    fallback_model: str = Field(default="gpt-oss-120b", description="Model for fallback LLM calls via LiteLLM")
+    codex_model: str = Field(default="stepfun/step-3.5-flash:free")
     max_shell_commands: int = Field(default=15)
     investigation_timeout_seconds: int = Field(default=300)
-    playground_ssh_host: str = Field(default="playground-app")
-    playground_ssh_user: str = Field(default="sre-agent")
-    playground_ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
+    ssh_user: str = Field(default="sre-agent")
+    ssh_key_path: str = Field(default="/run/secrets/ssh/id_ed25519")
     langfuse_public_key: str = Field(default="", description="Langfuse public key")
     langfuse_secret_key: str = Field(default="", description="Langfuse secret key")
     langfuse_host: str = Field(default="http://langfuse:3000")

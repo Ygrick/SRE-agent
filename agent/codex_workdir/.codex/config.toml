@@ -1,7 +1,7 @@
 # Codex CLI configuration for SRE Agent
-# Provider: OpenRouter (full Responses API support, no SSE proxy needed)
+# Provider: OpenRouter (full Responses API support)
 
-model = "qwen/qwen3.6-plus-preview:free"
+model = "stepfun/step-3.5-flash:free"
 model_provider = "openrouter"
 
 [approval]

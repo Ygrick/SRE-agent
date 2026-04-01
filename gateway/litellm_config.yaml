@@ -1,62 +1,46 @@
 # LiteLLM Proxy Configuration
-# Подробности: docs/specs/llm-gateway.md
-# Как добавить нового провайдера: docs/guides/add-provider.md
+# Docs: docs/specs/llm-gateway.md
+# Add providers: docs/guides/add-provider.md
 
 model_list:
   # =============================================
-  # OpenRouter (free-tier модели)
+  # Step 3.5 Flash (primary — fast 2-5s, good quality)
   # =============================================
-  - model_name: "gpt-oss-120b"
+  - model_name: "step-3.5-flash"
     litellm_params:
-      model: "openai/openai/gpt-oss-120b:free"
+      model: "openai/stepfun/step-3.5-flash:free"
       api_base: "https://openrouter.ai/api/v1"
       api_key: "os.environ/OPENROUTER_API_KEY"
-      input_cost_per_token: 0.0
-      output_cost_per_token: 0.0
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000004
+      rpm: 30
+      tpm: 120000
     model_info:
-      id: "openrouter-gpt-oss-120b"
-
-  - model_name: "minimax-m2.5"
-    litellm_params:
-      model: "openai/minimax/minimax-m2.5:free"
-      api_base: "https://openrouter.ai/api/v1"
-      api_key: "os.environ/OPENROUTER_API_KEY"
-      input_cost_per_token: 0.0
-      output_cost_per_token: 0.0
-    model_info:
-      id: "openrouter-minimax-m2.5"
-
-  - model_name: "qwen3-coder"
-    litellm_params:
-      model: "openai/qwen/qwen3-coder:free"
-      api_base: "https://openrouter.ai/api/v1"
-      api_key: "os.environ/OPENROUTER_API_KEY"
-      input_cost_per_token: 0.0
-      output_cost_per_token: 0.0
-    model_info:
-      id: "openrouter-qwen3-coder"
+      id: "openrouter-step-3.5-flash"
+      priority: 0       # highest priority — 2-5s latency, stable
 
   # =============================================
-  # RMR Router (OpenAI-compatible, gpt-oss-120b)
-  # Второй deployment той же модели для балансировки
+  # Optional: vLLM gpt-oss-20b on GPU (uncomment when available)
+  # См. vllm/Dockerfile и docs/guides/deploy-vllm.md
   # =============================================
-  - model_name: "gpt-oss-120b"
-    litellm_params:
-      model: "openai/gpt-oss-120b"
-      api_base: "os.environ/RMR_BASE_URL"
-      api_key: "os.environ/RMR_API_KEY"
-      input_cost_per_token: 0.0
-      output_cost_per_token: 0.0
-    model_info:
-      id: "rmr-gpt-oss-120b"
+  # - model_name: "gpt-oss-20b"
+  #   litellm_params:
+  #     model: "openai/openai/gpt-oss-20b"
+  #     api_base: "http://<GPU_HOST>:8000/v1"
+  #     api_key: "none"
+  #     input_cost_per_token: 0.0
+  #     output_cost_per_token: 0.0
+  #   model_info:
+  #     id: "vllm-local"
+  #     priority: 0
 
 router_settings:
-  routing_strategy: "latency-based-routing"
-  allowed_fails: 3
-  cooldown_time: 30
-  num_retries: 2
-  timeout: 60
-  enable_pre_call_checks: true
+  routing_strategy: "latency-based-routing"   # приоритет быстрому провайдеру
+  allowed_fails: 3                            # 3 ошибки → cooldown
+  cooldown_time: 30                           # 30 секунд в cooldown
+  num_retries: 2                              # 2 retry перед failover
+  timeout: 120                                # таймаут на запрос
+  enable_pre_call_checks: true                # health-check перед routing
 
 litellm_settings:
   drop_params: true
@@ -67,7 +51,7 @@ litellm_settings:
 general_settings:
   master_key: "os.environ/LITELLM_MASTER_KEY"
   database_url: "os.environ/LITELLM_DATABASE_URL"
-  store_model_in_db: true
+  store_model_in_db: true                     # динамическая регистрация через API
 
 guardrails:
   - guardrail_name: "sre-prompt-injection"
