@@ -36,5 +36,5 @@ Web UI: http://localhost:8089
 
 ```bash
 export LITELLM_MASTER_KEY=sk-master-changeme
-export LOAD_TEST_MODEL=gpt-oss-120b
+export LOAD_TEST_MODEL=step-3.5-flash
 ```

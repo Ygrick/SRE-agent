@@ -24,7 +24,7 @@ from locust import HttpUser, between, task, tag
 
 
 LITELLM_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-master-changeme")
-MODEL = os.environ.get("LOAD_TEST_MODEL", "gpt-oss-120b")
+MODEL = os.environ.get("LOAD_TEST_MODEL", "step-3.5-flash")
 
 
 class LLMUser(HttpUser):
