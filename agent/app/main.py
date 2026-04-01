@@ -1,7 +1,7 @@
 """SRE Agent — FastAPI application.
 
-Receives Zabbix alerts via webhook, runs investigations via Codex CLI
-(or fallback LLM), and sends reports to Telegram.
+Receives Zabbix alerts via webhook, runs investigations via Codex CLI,
+and sends reports to Telegram.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ import httpx
 import structlog
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 
-from agent.app.codex_runner import run_investigation
+from agent.app.codex_runner import build_prompt, run_codex
 from agent.app.config import settings
 from agent.app.langfuse_tracer import InvestigationTracer
 from agent.app.mcp_tools.telegram_send import send_report
@@ -79,7 +79,7 @@ async def _register_in_registry() -> None:
             {
                 "id": "diagnose-incident",
                 "name": "Diagnose Incident",
-                "description": "Run shell diagnostics on playground via SSH",
+                "description": "Run shell diagnostics on target host via SSH",
             },
             {
                 "id": "search-runbooks",
@@ -152,19 +152,31 @@ async def _investigate(alert: ZabbixAlert, investigation_id: str) -> None:
     )
 
     try:
-        report = await run_investigation(
-            alert=alert.model_dump(),
-            investigation_id=investigation_id,
-            tracer=tracer,
-        )
+        prompt = build_prompt(alert.model_dump())
 
-        # Send to Telegram
+        report = await run_codex(prompt, investigation_id, tracer)
+
+        if not report:
+            telegram_report = (
+                f"⚠️ *SRE Agent: Investigation Failed*\n"
+                f"Alert: `{alert.trigger}`\n"
+                f"Host: `{alert.host}`\n"
+                f"Severity: `{alert.severity}`\n\n"
+                f"Codex agent did not produce a report."
+            )
+            telegram_result = await send_report(telegram_report)
+            tracer.finish(status="failed", output="codex_no_report")
+            _metrics["investigations_failed"] += 1
+            logger.warning("investigation_no_report", investigation_id=investigation_id)
+            return
+
         telegram_report = (
             f"🔴 *SRE Agent Report*\n"
             f"Alert: `{alert.trigger}`\n"
             f"Host: `{alert.host}`\n"
-            f"Severity: `{alert.severity}`\n\n"
-            f"{report[:3500]}"
+            f"Severity: `{alert.severity}`\n"
+            f"🤖 Pipeline: Codex Agent\n\n"
+            f"{report[:3400]}"
         )
         telegram_result = await send_report(telegram_report)
         tracer.span_tool_call("telegram_send", telegram_report[:200], telegram_result)
