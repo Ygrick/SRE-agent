@@ -269,10 +269,25 @@ async def zabbix_webhook(
 
 
 @app.get("/metrics")
-async def metrics() -> dict:
-    """Prometheus-compatible metrics endpoint (simple JSON for now).
+async def metrics() -> str:
+    """Prometheus-compatible metrics endpoint.
 
     Returns:
-        Metrics dict.
+        Metrics in Prometheus text exposition format.
     """
-    return _metrics
+    lines = [
+        "# HELP sre_agent_investigations_total Total investigations started",
+        "# TYPE sre_agent_investigations_total counter",
+        f"sre_agent_investigations_total {_metrics['investigations_total']}",
+        "# HELP sre_agent_investigations_completed Investigations completed successfully",
+        "# TYPE sre_agent_investigations_completed counter",
+        f"sre_agent_investigations_completed {_metrics['investigations_completed']}",
+        "# HELP sre_agent_investigations_failed Investigations failed",
+        "# TYPE sre_agent_investigations_failed counter",
+        f"sre_agent_investigations_failed {_metrics['investigations_failed']}",
+        "# HELP sre_agent_investigations_active Currently active investigations",
+        "# TYPE sre_agent_investigations_active gauge",
+        f"sre_agent_investigations_active {_metrics['investigations_active']}",
+    ]
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
