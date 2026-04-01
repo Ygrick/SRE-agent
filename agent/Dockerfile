@@ -29,6 +29,7 @@ RUN uv sync --no-dev --no-install-project
 RUN mkdir -p agent
 RUN touch agent/__init__.py
 COPY app/ agent/app/
+COPY mcp_servers/ agent/mcp_servers/
 
 # Copy scripts and codex workdir
 COPY scripts/ scripts/

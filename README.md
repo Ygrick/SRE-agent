@@ -232,7 +232,7 @@ uv run locust -f tests/load/locustfile.py LLMUser \
 - [Diagrams](docs/diagrams/) — C4 Context, Container, Component, Workflow, Data Flow
 - Спецификации: [LLM Gateway](docs/specs/llm-gateway.md) · [Agent Registry](docs/specs/agent-registry.md) · [SRE Agent](docs/specs/sre-agent.md) · [Observability](docs/specs/observability.md) · [Guardrails](docs/specs/guardrails.md) · [Auth](docs/specs/auth.md) · [Retriever](docs/specs/retriever.md) · [Serving & Config](docs/specs/serving-config.md) · [Load Testing](docs/specs/load-testing.md)
 - [Product Proposal](docs/product-proposal.md) · [Governance & Risks](docs/governance.md)
-- Руководства: [Добавить LLM-провайдера](docs/guides/add-provider.md) · [Добавить SSH-хост](docs/guides/add-ssh-host.md) · [Сценарии использования](docs/guides/usage.md) · [Развернуть vLLM на GPU](docs/guides/deploy-vllm.md)
+- Руководства: [Добавить LLM-провайдера](docs/guides/add-provider.md) · [Добавить SSH-хост](docs/guides/add-ssh-host.md) · [Добавить MCP-сервер](docs/guides/add-mcp-server.md) · [Сценарии использования](docs/guides/usage.md) · [Развернуть vLLM на GPU](docs/guides/deploy-vllm.md)
 
 ## Что НЕ делает PoC
 
