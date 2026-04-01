@@ -1,6 +1,8 @@
-"""Tests for agent.app.codex_runner: build_prompt and _extract_report."""
+"""Tests for agent.app.codex_runner: build_prompt and _parse_json_events."""
 
-from agent.app.codex_runner import _extract_report, build_prompt
+from unittest.mock import MagicMock
+
+from agent.app.codex_runner import _parse_json_events, build_prompt
 
 
 class TestBuildPrompt:
@@ -13,7 +15,7 @@ class TestBuildPrompt:
         assert "web-server-01" in prompt
         assert "CPU usage is too high" in prompt
         assert "high" in prompt
-        assert "ssh" in prompt.lower()
+        assert "ssh web-server-01" in prompt
 
     def test_build_prompt_memory_alert(self) -> None:
         """Prompt for memory-related alert contains all required fields."""
@@ -44,45 +46,87 @@ class TestBuildPrompt:
         }
         prompt = build_prompt(alert)
 
-        # Should not raise KeyError
         assert "app-01" in prompt
         assert "Disk full" in prompt
 
 
-class TestExtractReport:
-    """Tests for _extract_report()."""
+class TestParseJsonEvents:
+    """Tests for _parse_json_events()."""
 
-    def test_extract_report_from_stdout(self) -> None:
-        """Non-empty stdout is returned as the report."""
-        report = _extract_report("Investigation complete: CPU at 95%", "some stderr noise")
-        assert report == "Investigation complete: CPU at 95%"
+    def _make_tracer(self) -> MagicMock:
+        """Create a mock tracer."""
+        tracer = MagicMock()
+        tracer.span_llm_call = MagicMock()
+        tracer.span_shell_command = MagicMock()
+        return tracer
 
-    def test_extract_report_from_stderr_fallback(self) -> None:
-        """When stdout is empty, falls back to last codex block in stderr."""
-        stderr = (
-            "user\nshow me status\n"
-            "\ncodex\n"
-            "Running diagnostics...\n"
-            "\ncodex\n"
-            "Final report: all services healthy\n"
-            "tokens used 1234"
+    def test_parse_agent_message(self) -> None:
+        """Last agent_message is returned as report."""
+        tracer = self._make_tracer()
+        stdout = '{"type":"item.completed","item":{"type":"agent_message","text":"## Report here"}}\n'
+
+        report = _parse_json_events(stdout, tracer)
+
+        assert report == "## Report here"
+        tracer.span_llm_call.assert_called_once()
+
+    def test_parse_command_execution(self) -> None:
+        """command_execution creates shell_command span."""
+        tracer = self._make_tracer()
+        stdout = (
+            '{"type":"item.completed","item":{"type":"command_execution",'
+            '"command":"ssh playground uptime","aggregated_output":"up 2h","exit_code":0}}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n'
         )
-        report = _extract_report("", stderr)
-        assert report is not None
-        assert "Final report" in report
 
-    def test_extract_report_empty(self) -> None:
-        """Both empty returns None."""
-        assert _extract_report("", "") is None
+        report = _parse_json_events(stdout, tracer)
 
-    def test_extract_report_stdout_preferred(self) -> None:
-        """When both have content, stdout wins."""
-        report = _extract_report("stdout report", "\ncodex\nstderr report\ntokens used 500")
-        assert report == "stdout report"
+        assert report == "Done"
+        tracer.span_shell_command.assert_called_once_with(
+            command="ssh playground uptime",
+            exit_code=0,
+            stdout="up 2h",
+        )
 
-    def test_extract_report_whitespace_stdout(self) -> None:
-        """Whitespace-only stdout treated as empty (stripped)."""
-        # build_prompt doesn't strip, but _extract_report checks truthiness
-        # after codex_runner strips stdout — here we test with already-stripped value
-        report = _extract_report("", "")
-        assert report is None
+    def test_parse_multiple_messages_returns_last(self) -> None:
+        """When multiple agent_messages, returns the last one (report)."""
+        tracer = self._make_tracer()
+        stdout = (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Running diagnostics..."}}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"## Final Report"}}\n'
+        )
+
+        report = _parse_json_events(stdout, tracer)
+
+        assert report == "## Final Report"
+        assert tracer.span_llm_call.call_count == 2
+
+    def test_parse_turn_completed_tokens(self) -> None:
+        """turn.completed event extracts token usage."""
+        tracer = self._make_tracer()
+        stdout = (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":1000,"output_tokens":200}}\n'
+        )
+
+        report = _parse_json_events(stdout, tracer)
+
+        assert report == "ok"
+
+    def test_parse_empty_stdout(self) -> None:
+        """Empty stdout returns None."""
+        tracer = self._make_tracer()
+        assert _parse_json_events("", tracer) is None
+
+    def test_parse_invalid_json_lines_skipped(self) -> None:
+        """Non-JSON lines are silently skipped."""
+        tracer = self._make_tracer()
+        stdout = (
+            "not json\n"
+            '{"type":"item.completed","item":{"type":"agent_message","text":"report"}}\n'
+            "another garbage\n"
+        )
+
+        report = _parse_json_events(stdout, tracer)
+
+        assert report == "report"

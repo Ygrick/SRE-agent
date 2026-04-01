@@ -58,6 +58,7 @@ class InvestigationTracer:
         investigation_id: str,
         host: str,
         severity: str,
+        trigger: str = "",
     ) -> None:
         """Initialize investigation tracer.
 
@@ -66,6 +67,7 @@ class InvestigationTracer:
             investigation_id: Unique investigation ID.
             host: Affected host.
             severity: Alert severity.
+            trigger: Alert trigger description.
         """
         self.alert_id = alert_id
         self.investigation_id = investigation_id
@@ -78,6 +80,12 @@ class InvestigationTracer:
             self._trace = self._langfuse.trace(
                 id=investigation_id,
                 name="investigation",
+                input={
+                    "alert_id": alert_id,
+                    "host": host,
+                    "trigger": trigger,
+                    "severity": severity,
+                },
                 metadata={
                     "alert_id": alert_id,
                     "host": host,
@@ -185,44 +193,3 @@ class InvestigationTracer:
             status=status,
         )
 
-    def process_codex_event(self, event: dict) -> None:
-        """Process a single codex --json event and create appropriate span.
-
-        Args:
-            event: Parsed JSON event from codex stdout.
-        """
-        event_type = event.get("type", "")
-
-        if event_type == "message" and event.get("role") == "assistant":
-            content = ""
-            for item in event.get("content", []):
-                if item.get("type") == "output_text":
-                    content += item.get("text", "")
-            if content:
-                self.span_llm_call(
-                    model=settings.codex_model,
-                    input_text="",
-                    output_text=content[:2000],
-                )
-
-        elif event_type == "function_call":
-            self.span_tool_call(
-                tool_name=event.get("name", "unknown"),
-                input_data=event.get("arguments", {}),
-                output_data=None,
-            )
-
-        elif event_type == "function_call_output":
-            self.span_tool_call(
-                tool_name=event.get("name", "unknown"),
-                input_data=None,
-                output_data=str(event.get("output", ""))[:2000],
-            )
-
-        elif event_type == "exec" or event_type == "shell":
-            cmd = event.get("command", event.get("input", ""))
-            self.span_shell_command(
-                command=str(cmd)[:500],
-                exit_code=event.get("exit_code", 0),
-                stdout=str(event.get("output", event.get("stdout", "")))[:4000],
-            )

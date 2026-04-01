@@ -78,11 +78,12 @@ class TestMetricsEndpoint:
     """Tests for GET /metrics."""
 
     def test_metrics_endpoint(self, client: TestClient) -> None:
-        """GET /metrics returns counter dict."""
+        """GET /metrics returns Prometheus text format."""
         resp = client.get("/metrics")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "investigations_total" in data
-        assert "investigations_completed" in data
-        assert "investigations_failed" in data
-        assert "investigations_active" in data
+        assert "text/plain" in resp.headers["content-type"]
+        body = resp.text
+        assert "sre_agent_investigations_total" in body
+        assert "sre_agent_investigations_completed" in body
+        assert "sre_agent_investigations_failed" in body
+        assert "sre_agent_investigations_active" in body

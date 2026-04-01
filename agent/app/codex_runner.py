@@ -1,12 +1,12 @@
 """Codex CLI runner for SRE investigations.
 
-Запускает `codex exec` как subprocess и захватывает результат.
-Codex читает AGENTS.md с инструкциями (команды по типу алерта, формат отчёта).
-stdout = финальное сообщение агента (чистый текст).
-stderr = terminal UI (блоки user/codex/exec).
+Запускает `codex exec --json` как subprocess и парсит JSON-события.
+Каждое событие трейсится в Langfuse (command_execution → span, agent_message → generation).
+Финальное agent_message = итоговый отчёт.
 """
 
 import asyncio
+import json
 import os
 import shutil
 
@@ -47,7 +47,11 @@ def build_prompt(alert: dict) -> str:
 
 
 async def run_codex(prompt: str, investigation_id: str, tracer: InvestigationTracer) -> str | None:
-    """Run Codex CLI and return the investigation report.
+    """Run Codex CLI in JSON mode and return the investigation report.
+
+    Parses JSON events from stdout, creates Langfuse spans for each
+    command execution and agent message. Returns the last agent message
+    as the investigation report.
 
     Args:
         prompt: Investigation prompt.
@@ -73,6 +77,7 @@ async def run_codex(prompt: str, investigation_id: str, tracer: InvestigationTra
     cmd = [
         "codex", "exec",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--json",
         "--model", settings.codex_model,
         prompt,
     ]
@@ -97,60 +102,79 @@ async def run_codex(prompt: str, investigation_id: str, tracer: InvestigationTra
         return None
 
     stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
-    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
     logger.info(
         "codex_exec_finished",
         investigation_id=investigation_id,
         exit_code=process.returncode,
         stdout_bytes=len(stdout_bytes),
-        stderr_bytes=len(stderr_bytes),
-        stdout_preview=stdout_text[:200] if stdout_text else "(empty)",
     )
 
-    report = _extract_report(stdout_text, stderr_text)
-
-    if report:
-        tracer.span_llm_call(
-            model=settings.codex_model,
-            input_text=prompt[:300],
-            output_text=report[:1000],
-        )
-        return report
-
-    logger.warning("codex_no_report", investigation_id=investigation_id)
-    return None
+    return _parse_json_events(stdout_text, tracer)
 
 
-def _extract_report(stdout: str, stderr: str) -> str | None:
-    """Extract report from Codex output.
+def _parse_json_events(stdout: str, tracer: InvestigationTracer) -> str | None:
+    """Parse Codex --json events and create Langfuse spans.
 
-    Returns stdout if non-empty (Codex puts final message there).
-    Falls back to last text block from stderr terminal UI.
+    Extracts the last agent_message as the report. Creates spans
+    for command_execution events and generations for agent_messages.
 
     Args:
-        stdout: Codex stdout (final assistant message).
-        stderr: Codex stderr (terminal UI).
+        stdout: Raw stdout with one JSON object per line.
+        tracer: Langfuse tracer for span creation.
 
     Returns:
-        Report text or None.
+        Report text (last agent message) or None.
     """
-    if stdout:
-        return stdout
+    last_message: str | None = None
+    total_input_tokens = 0
+    total_output_tokens = 0
 
-    # Fallback: extract last "codex" message block from stderr
-    if stderr:
-        parts = stderr.split("\ncodex\n")
-        if len(parts) > 1:
-            tail = parts[-1]
-            for stop in ("tokens used", "\nexec\n", "\nuser\n"):
-                pos = tail.find(stop)
-                if pos > 0:
-                    tail = tail[:pos]
-            if tail.strip():
-                return tail.strip()
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
 
-    return None
+        event_type = event.get("type", "")
+        item = event.get("item", {})
+
+        if event_type == "item.completed":
+            item_type = item.get("type", "")
+
+            if item_type == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    last_message = text
+                    tracer.span_llm_call(
+                        model=settings.codex_model,
+                        input_text="",
+                        output_text=text[:2000],
+                    )
+
+            elif item_type == "command_execution":
+                tracer.span_shell_command(
+                    command=item.get("command", "")[:500],
+                    exit_code=item.get("exit_code", -1),
+                    stdout=item.get("aggregated_output", "")[:4000],
+                )
+
+        elif event_type == "turn.completed":
+            usage = event.get("usage", {})
+            total_input_tokens += usage.get("input_tokens", 0)
+            total_output_tokens += usage.get("output_tokens", 0)
+
+    if total_input_tokens or total_output_tokens:
+        logger.info(
+            "codex_tokens",
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+        )
+
+    return last_message
 
 
 def _build_env() -> dict[str, str]:
@@ -164,7 +188,6 @@ def _build_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     env["LITELLM_API_KEY"] = settings.gateway_api_key
-    # Remove vars that could confuse Codex
     env.pop("OPENAI_BASE_URL", None)
     env.pop("OPENAI_API_KEY", None)
     return env
